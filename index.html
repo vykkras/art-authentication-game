@@ -1701,6 +1701,17 @@
                 <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 4, color: "#8b7355", textTransform: "uppercase", marginBottom: 12 }}>Art Authentication Bureau</div>
                 <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: 48, fontWeight: 700, margin: "0 0 10px", lineHeight: 1.05 }}>The Case Files</h1>
                 <p style={{ fontFamily: "'Special Elite', monospace", fontSize: 14, color: "#a08878", margin: 0, letterSpacing: 1 }}>Authenticate. Question. Decide.</p>
+                <div style={{ marginTop: 16 }}>
+                  {isAdmin ? (
+                    <button onClick={onSignOut} style={{ padding: "5px 12px", fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 1, background: "transparent", color: "#8b7355", border: "1px solid #5a3e2b", textTransform: "uppercase" }}>
+                      ◆ Admin — Sign out
+                    </button>
+                  ) : (
+                    <button onClick={onSignIn} style={{ padding: "5px 12px", fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 1, background: "transparent", color: "#5a4030", border: "1px solid #3a2a1a", textTransform: "uppercase" }}>
+                      ◆ Admin
+                    </button>
+                  )}
+                </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end", flexShrink: 0, marginTop: 6 }}>
                 {/* Coin balance */}
@@ -1772,24 +1783,13 @@
                 );
               })}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px solid #c8b898" }}>
-              {onNew ? (
+            {onNew && (
+              <div style={{ paddingTop: 16, borderTop: "1px solid #c8b898" }}>
                 <button style={{ padding: "12px 30px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 2, background: "transparent", color: "#5a3e2b", border: "1px solid #c8b898", textTransform: "uppercase" }} onClick={onNew}>
                   + Create New Case
                 </button>
-              ) : <span />}
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                {isAdmin ? (
-                  <button onClick={onSignOut} style={{ padding: "6px 14px", fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 1, background: "transparent", color: "#8b7355", border: "1px solid #c8b898", textTransform: "uppercase" }}>
-                    ◆ Admin — Sign out
-                  </button>
-                ) : (
-                  <button onClick={onSignIn} style={{ padding: "6px 14px", fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 1, background: "transparent", color: "#c8b898", border: "1px solid #e8e0ce", textTransform: "uppercase", opacity: 0.4 }}>
-                    ◆ Admin
-                  </button>
-                )}
               </div>
-            </div>
+            )}
           </div>
         </div>
       );
