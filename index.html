@@ -1,0 +1,1890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Art Case Editor</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1814; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ─── Firebase ─────────────────────────────────────────────────────────────
+    // Paste your Firebase project config here (Firebase Console → Project Settings → Your apps)
+    const firebaseConfig = {
+      apiKey:            "YOUR_API_KEY",
+      authDomain:        "YOUR_PROJECT.firebaseapp.com",
+      projectId:         "YOUR_PROJECT_ID",
+      storageBucket:     "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId:             "YOUR_APP_ID",
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db   = firebase.firestore();
+    const auth = firebase.auth();
+
+    // ─── Constants ────────────────────────────────────────────────────────────
+
+    const EMPTY_ITEM     = { text: "", flag: false, critical: false };
+    const EMPTY_OPTION   = { text: "", response: "", flag: false, critical: false, followUp: null };
+    const EMPTY_QUESTION = { question: "", trigger: "anytime", options: [{ ...EMPTY_OPTION }, { ...EMPTY_OPTION }] };
+    const DEFAULT_TABS   = [
+      { key: "provenance", title: "Provenance Documents" },
+      { key: "technical",  title: "Technical Analysis"   },
+      { key: "database",   title: "Art History Database" },
+      { key: "seller_bg",  title: "Seller Background"    },
+    ];
+
+    const EMPTY_CASE = {
+      id: Date.now(),
+      painting: { title: "", artist: "", year_claimed: "", movement: "", emoji: "🖼️", description: "", image: null },
+      seller:   { name: "", origin: "", dialogue: [""] },
+      evidence: Object.fromEntries(DEFAULT_TABS.map(t => [t.key, { title: t.title, items: [{ ...EMPTY_ITEM }] }])),
+      evidenceOrder: DEFAULT_TABS.map(t => t.key),
+      questions: [],
+      verdict: "FORGERY",
+      explanation: "",
+    };
+
+    const deepClone = o => JSON.parse(JSON.stringify(o));
+
+    // ─── Preloaded Cases ──────────────────────────────────────────────────────
+
+    const PRELOADED_CASES = [
+      {
+        id: 1001,
+        painting: { title: "The Lacemaker's Companion", artist: "Johannes Vermeer", year_claimed: "1668", movement: "Dutch Golden Age", emoji: "🪡", description: "A small oil on canvas depicting a young woman bent over her lacemaking cushion near a window. Soft light falls across her face. Rich in domestic quiet — characteristic of the Delft master.", image: null },
+        seller: { name: "Pieter van Aalst", origin: "Amsterdam, Netherlands", dialogue: [
+          "This piece has been in private hands for over a century. The Vermeersch family — no relation to the painter — kept it in their estate outside Bruges.",
+          "They were an extremely discreet family. Old money. They never publicised their collection, which is why it never appeared in the major surveys.",
+          "I authenticated it myself. The certificate is from the Rijksdienst voor Kultureel Erfgoed. Everything is in order.",
+          "I can offer you first refusal. There are two other buyers circling, and I would hate for this to leave the Netherlands."
+        ]},
+        evidence: {
+          provenance: { title: "Provenance Documents", items: [
+            { text: "Certificate of Authenticity issued by the Rijksdienst voor Kultureel Erfgoed, dated March 1987. Signed by 'Dr. A. J. Houten, Senior Appraiser'.", flag: true, critical: true },
+            { text: "Handwritten estate inventory of the Vermeersch family, Bruges, undated. The painting is listed as 'een klein schilderij door de Delftse meester' (a small painting by the Delft master).", flag: false, critical: false },
+            { text: "Bill of sale from 'H. de Vos, Antwerp' to G. Vermeersch, dated 1901. Amount: 120 Belgian francs.", flag: false, critical: false },
+          ]},
+          technical: { title: "Technical Analysis", items: [
+            { text: "Infrared reflectography reveals underdrawing consistent with 17th-century Delft practice. No signs of modern mechanical reproduction.", flag: false, critical: false },
+            { text: "Pigment analysis: traces of synthetic ultramarine blue (PB 29) detected in the blue garment. Synthetic ultramarine was not commercially available until the 1820s. Vermeer exclusively used natural lapis lazuli.", flag: true, critical: true },
+            { text: "Canvas weave density: 14 threads/cm². Documented Vermeer canvases range from 9–12 threads/cm². This reading is outside the expected range.", flag: true, critical: false },
+            { text: "Craquelure pattern appears artificial — consistent with chemically accelerated ageing rather than natural desiccation over 350 years.", flag: true, critical: false },
+          ]},
+          database: { title: "Art History Database", items: [
+            { text: "The Vermeer catalogue raisonné (Wheelock, 1995; Liedtke, 2008) lists 34–36 authenticated works. 'The Lacemaker's Companion' does not appear in either catalogue.", flag: true, critical: true },
+            { text: "The Rijksdienst voor Kultureel Erfgoed (RCE) was established in 1988 — one year AFTER the date printed on the certificate of authenticity.", flag: true, critical: true },
+            { text: "The painting shares near-identical posture with Vermeer's confirmed 'The Lacemaker' (c.1669–71, Louvre). Compositional overlap is unusually strong.", flag: false, critical: false },
+          ]},
+          seller_bg: { title: "Seller Background", items: [
+            { text: "Van Aalst Fine Art Gallery, Amsterdam. Registered: 2019. No prior exhibition history or academic publications in Old Master works.", flag: true, critical: false },
+            { text: "Pieter van Aalst holds no formal credentials in art history or conservation. No record of previous sales at major auction houses.", flag: true, critical: false },
+            { text: "Interpol Art Crime Unit: no active flag against van Aalst or known associates.", flag: false, critical: false },
+          ]},
+        },
+        evidenceOrder: ["provenance","technical","database","seller_bg"],
+        questions: [
+          { question: "Can you trace the painting before 1901?", trigger: "after_seller", options: [
+            { text: "Who is H. de Vos, the 1901 seller?", response: "A dealer based in Antwerp. Long defunct. The records don't go further than what you've already seen.", followUp: null },
+            { text: "A 350-year-old work with no prior paper trail — doesn't that concern you?", response: "Many works passed through the market without documentation in those eras. That's not unusual for private collections.", followUp: null },
+          ]},
+          { question: "The certificate is dated 1987 — can I contact the issuing agency to confirm?", trigger: "after_evidence", options: [
+            { text: "I'll verify directly with the RCE.", response: "That shouldn't be necessary. The certificate speaks for itself. Dr. Houten passed away in 1994 — a great loss to the field.", flag: true, critical: false, followUp: {
+              question: "The RCE didn't exist until 1988 — a year after this certificate's date. How do you explain that?",
+              options: [
+                { text: "Wait for his response", response: "I... there must be a typographical error on the document. The date should read 1989. I will have it corrected immediately.", flag: true, critical: true, followUp: null },
+                { text: "Ask who actually issued the certificate", response: "I purchased this in good faith. I had no knowledge of any irregularity. I suggest we speak with my lawyer.", flag: true, critical: false, followUp: null },
+              ]
+            }},
+            { text: "Has the RCE re-examined it recently?", response: "Re-authentication wasn't deemed necessary. The provenance chain is clear.", flag: false, critical: false, followUp: null },
+          ]},
+        ],
+        verdict: "FORGERY",
+        explanation: "The certificate of authenticity was issued by an agency that did not exist in 1987. Synthetic ultramarine blue — unavailable until the 1820s — was found in the pigments. The painting does not appear in any Vermeer catalogue raisonné. Canvas weave density and artificial craquelure are both inconsistent with genuine 17th-century Dutch works. This is a sophisticated forgery, likely produced in the mid-to-late 20th century and artificially aged.",
+      },
+      {
+        id: 1002,
+        painting: { title: "Les Nymphéas — Étude du Crépuscule", artist: "Claude Monet", year_claimed: "1907", movement: "Impressionism", emoji: "🌸", description: "A horizontal canvas of water lilies at dusk, the pond surface dissolving into violet and amber reflections. Loose, urgent brushwork — one of Monet's private studies from Giverny, never exhibited during his lifetime.", image: null },
+        seller: { name: "Marguerite Fontaine", origin: "Paris, France", dialogue: [
+          "I represent the estate of the Deschamps family. They have held this study since 1912, when Édouard Deschamps purchased it directly from the Galerie Bernheim-Jeune — Monet's exclusive Paris dealer.",
+          "It has never been exhibited publicly. The family were collectors, not dealers. They hung it in their home in the 16th arrondissement for over a century.",
+          "When the last of the family passed last year, it fell to me as notary to arrange the sale of the estate assets.",
+          "I am not in a hurry. I have had enquiries from three institutions. But private placement is preferred — the family wished for the work to remain in a single collection."
+        ]},
+        evidence: {
+          provenance: { title: "Provenance Documents", items: [
+            { text: "Receipt from Galerie Bernheim-Jeune, Paris, 14 June 1909: 'Une étude, Nymphéas, crépuscule' — sold to an unnamed private buyer for 4,200 francs. Buyer names were routinely redacted in period ledgers.", flag: false, critical: false },
+            { text: "Bill of sale: Bernheim-Jeune to Édouard Deschamps, 3 February 1912. Described as 'étude sur toile, Nymphéas, 1907 environ'. Price: 6,800 francs.", flag: false, critical: false },
+            { text: "Deschamps family estate inventories, 1961 and 1998. Both list 'une toile Monet, nymphéas, salon principal'. Consistent entry across 37 years.", flag: false, critical: false },
+            { text: "French Ministry of Culture export certificate, issued 2024. Cleared for international sale.", flag: false, critical: false },
+          ]},
+          technical: { title: "Technical Analysis", items: [
+            { text: "Canvas stamp on reverse: 'Lefebvre-Foinet, Paris'. Monet's documented primary supplier throughout the Nymphéas series (1896–1926).", flag: false, critical: false },
+            { text: "Pigments: lead white, cobalt blue, viridian, cadmium yellow — fully consistent with Monet's documented palette for the 1905–1910 water lily studies.", flag: false, critical: false },
+            { text: "X-ray fluorescence reveals multiple compositional layers and pentimenti, indicating genuine revision over time. Consistent with Monet's iterative working method.", flag: false, critical: false },
+            { text: "Natural craquelure pattern consistent with approximately 115 years of ageing on linen canvas. No evidence of artificial acceleration.", flag: false, critical: false },
+          ]},
+          database: { title: "Art History Database", items: [
+            { text: "Wildenstein Monet catalogue raisonné, vol. III: Entry W.1735 — 'Nymphéas, étude, crépuscule, 1907 (?)'. Location listed as 'whereabouts unknown since 1912'. Dimensions match exactly.", flag: false, critical: false },
+            { text: "Galerie Bernheim-Jeune stock ledger (archived, Bibliothèque nationale de France): Entry #1909-084 matches the sale receipt. Buyer name redacted per period practice — consistent with documentation.", flag: false, critical: false },
+            { text: "No record in Interpol's Art Crime database. No restitution claims filed. No ownership disputes on record.", flag: false, critical: false },
+          ]},
+          seller_bg: { title: "Seller Background", items: [
+            { text: "Fontaine & Associates, notaires. Established Paris, 1962. Handling the Deschamps estate since 1978. Excellent standing with the Chambre des Notaires de Paris.", flag: false, critical: false },
+            { text: "Marguerite Fontaine: qualified notaire since 1991. No disciplinary proceedings. No prior involvement in disputed art sales.", flag: false, critical: false },
+          ]},
+        },
+        evidenceOrder: ["provenance","technical","database","seller_bg"],
+        questions: [
+          { question: "Why has a Monet of this quality never appeared in any exhibition?", trigger: "after_seller", options: [
+            { text: "Was it ever published or reproduced?", response: "Not to my knowledge. Private collectors of that era often kept works entirely domestic. The Deschamps were discreet — old Parisian bourgeoisie.", followUp: null },
+            { text: "Doesn't that make authentication harder?", response: "It complicates provenance research, yes. But the physical evidence — the canvas stamp, the pigments, the Bernheim-Jeune ledger — speaks clearly enough.", followUp: null },
+          ]},
+          { question: "Can we confirm the 1909 buyer was Deschamps? The receipt has no name.", trigger: "after_evidence", options: [
+            { text: "Is the gap between 1909 and 1912 explained?", response: "Bernheim-Jeune held it on consignment for approximately two and a half years before Deschamps purchased it. This was standard practice for the gallery.", followUp: null },
+            { text: "Does the Wildenstein catalogue reference the Deschamps family?", response: "Entry W.1735 lists location as 'unknown since 1912'. Now we know why — it went directly into private hands. The timeline fits precisely.", followUp: null },
+          ]},
+        ],
+        verdict: "AUTHENTIC",
+        explanation: "All evidence supports authenticity. The canvas bears Lefebvre-Foinet's stamp — Monet's documented supplier. Pigments are fully consistent with his 1905–1910 palette. Wildenstein catalogue entry W.1735 matches this work's dimensions and date exactly, with location listed as 'unknown since 1912' — now resolved by the Deschamps provenance chain. The Bernheim-Jeune ledger corroborates the 1909 sale. No forgery indicators were found. A genuine Monet study, hidden in private hands for over a century.",
+      },
+      {
+        id: 1003,
+        painting: { title: "Bildnis einer Dame in Byzantinischem Gold", artist: "Gustav Klimt", year_claimed: "1904", movement: "Vienna Secession", emoji: "✨", description: "A portrait of an unnamed woman, her face rendered in pale realism against a mosaic of gold leaf and geometric ornament. From Klimt's transitional period, bridging naturalism and his mature Golden Phase. Striking — and deeply unsettling upon close inspection.", image: null },
+        seller: { name: "Conrad Metzger", origin: "Vienna, Austria", dialogue: [
+          "I acquired this work legally through a private estate in Salzburg. The documentation is complete. I have no reason to expect any complications.",
+          "Klimt's golden period pieces are extraordinarily rare on the open market. You understand what an opportunity this represents.",
+          "The export paperwork was arranged by my legal counsel through the Austrian Federal Monuments Office. Everything went through proper channels.",
+          "I'd prefer to move quickly. The longer a work like this sits, the more attention it attracts. I'm sure you understand the discretion required at this level."
+        ]},
+        evidence: {
+          provenance: { title: "Provenance Documents", items: [
+            { text: "Export permit issued by the 'Austrian Federal Monuments Office', signed by 'Dr. Hansgeorg Weiss, Senior Export Licensing Officer', dated 11 March 2021.", flag: true, critical: true },
+            { text: "Bill of sale from 'Nachlass Haider, Salzburg' to Conrad Metzger, via Treuhand Liechtenstein AG, dated 2021. No prior auction, exhibition, or publication record referenced.", flag: true, critical: false },
+            { text: "Transport declaration listing origin as 'private estate, Salzburg'. No property address, executor name, or legal heir identified.", flag: true, critical: false },
+          ]},
+          technical: { title: "Technical Analysis", items: [
+            { text: "Gold leaf application technique — beaten gold over chalk ground — is consistent with Klimt's documented method during the Golden Phase (1903–1910).", flag: false, critical: false },
+            { text: "Pigments: cadmium red, cobalt blue, titanium white, genuine gold leaf. All materials consistent with early 20th-century Viennese practice.", flag: false, critical: false },
+            { text: "Distinctive craquelure in the upper-right quadrant: irregular hexagonal breaks radiating from a point of historic impact damage, approximately 2cm in diameter.", flag: true, critical: true },
+            { text: "Canvas: linen, approx. 280g/m². Consistent with Klimt-era Austrian commercial linen. No modern synthetic fibres detected.", flag: false, critical: false },
+          ]},
+          database: { title: "Art History Database", items: [
+            { text: "INTERPOL Art Crime database (I-24/7): partial match flagged — 'Klimt, portrait, golden phase, c.1904, stolen Austria 1997'. Work stolen from secure storage at the Österreichische Galerie Belvedere depot, Vienna, August 1997.", flag: true, critical: true },
+            { text: "Archived Belvedere depot condition report photograph (1991): craquelure in upper-right quadrant matches exactly. Hexagonal break pattern and impact point are consistent with the photographed work.", flag: true, critical: true },
+            { text: "Austrian Federal Monuments Office (Bundesdenkmalamt) staff registry: no 'Dr. Hansgeorg Weiss' listed in any year from 1980 to present. The name does not appear in any official Austrian cultural authority record.", flag: true, critical: true },
+            { text: "Klimt Foundation catalogue: work listed as 'stolen, 1997, location unknown'. Entry references the Belvedere depot theft.", flag: true, critical: false },
+          ]},
+          seller_bg: { title: "Seller Background", items: [
+            { text: "Treuhand Liechtenstein AG: registered 2020. Shell company with no trading history prior to this transaction. Registered agent has no prior art market involvement.", flag: true, critical: false },
+            { text: "Conrad Metzger: no prior record of dealing in works at this value tier. No academic credentials in art history. No established relationship with major auction houses.", flag: true, critical: false },
+            { text: "Interpol alert linked to the 1997 Belvedere theft names an unnamed Austrian intermediary. Metzger's profile is consistent with this description.", flag: true, critical: false },
+          ]},
+        },
+        evidenceOrder: ["provenance","technical","database","seller_bg"],
+        questions: [
+          { question: "Who is the Haider estate and why is there no prior exhibition history for a Klimt of this quality?", trigger: "after_seller", options: [
+            { text: "Can the Haider estate be independently verified?", response: "The executor preferred anonymity. It's not unusual for Austrian families to handle such matters privately. There are inheritance sensitivities.", flag: true, critical: false, followUp: null },
+            { text: "No Klimt this significant has been in unrecorded private hands since 1904 — how?", response: "The family were extremely private. I was told the work was kept in a cellar vault. They had no interest in exhibitions or academic scrutiny.", flag: true, critical: false, followUp: null },
+          ]},
+          { question: "The export permit is signed by Dr. Hansgeorg Weiss — can we contact him directly?", trigger: "after_evidence", options: [
+            { text: "I need to verify this with the Monuments Office.", response: "That shouldn't be necessary. The documentation is complete. My legal counsel handled all of this personally.", flag: true, critical: false, followUp: {
+              question: "The Monuments Office has no record of any Dr. Weiss — in any year. This permit appears to be fraudulent. How do you respond?",
+              options: [
+                { text: "Press for an explanation", response: "I purchased this in complete good faith. If there's a problem with the paperwork, it's a matter for my lawyers. I had no knowledge of any irregularity.", flag: true, critical: false, followUp: null },
+                { text: "Ask who provided the permit", response: "The permit was included with the documents from the Haider estate. That is all I know. I strongly suggest we end this conversation.", flag: true, critical: true, followUp: null },
+              ]
+            }},
+            { text: "Is this the work stolen from the Belvedere in 1997?", response: "That is an outrageous suggestion. I am acting in complete good faith. I will not sit here and be accused of —", flag: true, critical: true, followUp: null },
+          ]},
+        ],
+        verdict: "STOLEN",
+        explanation: "This is the Klimt portrait stolen from the Österreichische Galerie Belvedere depot in August 1997. The craquelure in the upper-right quadrant — a unique hexagonal break pattern from a historic impact point — matches archived 1991 condition photographs exactly. The export permit is fraudulent: 'Dr. Hansgeorg Weiss' has never existed in any Austrian Federal Monuments Office registry. The Klimt Foundation lists this work as stolen. The provenance chain — a shell company, an anonymous estate, no prior record — was constructed to launder the work back onto the market.",
+      },
+    ];
+
+    // ─── Painters Reference Book ─────────────────────────────────────────────
+
+    const PAINTERS_BOOK = [
+      {
+        id: "vermeer",
+        name: "Johannes Vermeer",
+        years: "1632 – 1675",
+        nationality: "Dutch",
+        born: "Delft, Netherlands",
+        died: "Delft, Netherlands",
+        movement: "Dutch Golden Age",
+        subjects: "Domestic interiors, portraits of women, allegory, light and shadow studies",
+        technique: "Oil on canvas or panel; extraordinarily thin, luminous glazes built in multiple layers. Likely used a camera obscura to achieve precise perspective. Works are small in scale and exceptionally rare.",
+        palette: "Natural lapis lazuli ultramarine, lead white, vermilion, yellow ochre, bone black. Never synthetic ultramarine — that pigment was not invented until 1826.",
+        signature: "Signed \"IVMeer\" or \"IV Meer\" — typically in the upper-left or right corner. A significant number of authenticated works are unsigned entirely.",
+        authenticWorks: 34,
+        knownWorks: ["Girl with a Pearl Earring", "The Milkmaid", "The Art of Painting", "View of Delft", "Woman Reading a Letter", "The Lacemaker", "The Love Letter"],
+        redFlags: [
+          "Synthetic ultramarine pigment (anachronistic before 1826)",
+          "Any \"new\" attribution is extraordinary — only ~34 works authenticated",
+          "Excessively smooth or perfectly uniform craquelure pattern",
+          "Overly vivid or uniformly saturated colour throughout",
+        ],
+        portrait: null,
+        signatureRef: null,
+      },
+      {
+        id: "monet",
+        name: "Claude Monet",
+        years: "1840 – 1926",
+        nationality: "French",
+        born: "Paris, France",
+        died: "Giverny, France",
+        movement: "Impressionism",
+        subjects: "Landscapes, seascapes, water gardens, the play of light at different hours; famed for series paintings of the same subject under changing conditions",
+        technique: "Oil on canvas; rapid, broken, highly visible brushwork to capture fleeting light and atmosphere. Painted almost exclusively en plein air (outdoors). Late works increasingly abstracted toward pure colour.",
+        palette: "Bright, clean hues: cerulean blue, viridian green, cadmium yellow, rose madder, lead white. Famously and deliberately avoided black altogether.",
+        signature: "\"Claude Monet\" in flowing cursive script, consistently placed at the lower right corner. Signature style remained recognisably similar across decades.",
+        authenticWorks: 2500,
+        knownWorks: ["Water Lilies (series, 250+ works)", "Haystacks (series)", "Rouen Cathedral (series)", "Impression, Sunrise", "The Japanese Footbridge", "Women in the Garden", "La Grenouillère"],
+        redFlags: [
+          "Presence of black paint — Monet famously refused to use it",
+          "Tight, precise or heavily blended brushwork (inconsistent with his method)",
+          "Not listed in the Wildenstein Donnadieu Gustave (WDG) catalogue raisonné",
+          "Craquelure inconsistent with claimed age or geography of storage",
+        ],
+        portrait: null,
+        signatureRef: null,
+      },
+      {
+        id: "klimt",
+        name: "Gustav Klimt",
+        years: "1862 – 1918",
+        nationality: "Austrian",
+        born: "Baumgarten, near Vienna",
+        died: "Vienna, Austria",
+        movement: "Symbolism · Art Nouveau · Vienna Secession",
+        subjects: "Female figures, erotic allegory, mythology, portraiture of Viennese society, life and death cycles",
+        technique: "Oil on canvas with applied real gold and silver leaf (22-carat). Combines highly realistic treatment of faces and hands with completely flat, decorative, patterned backgrounds. Surface is tactile and richly textured. Strongly influenced by Byzantine mosaics and Japanese Rinpa school.",
+        palette: "22-carat gold leaf, silver leaf, oil in jewel tones — deep crimson, cobalt, emerald, ochre. The metallic surfaces are a defining hallmark and cannot be convincingly faked with gold paint.",
+        signature: "\"KLIMT\" in block capitals or \"Gustav Klimt\" in full — generally lower right. Also used a personal monogram in certain periods.",
+        authenticWorks: 230,
+        knownWorks: ["The Kiss", "Portrait of Adele Bloch-Bauer I", "Judith and the Head of Holofernes", "The Tree of Life", "Danae", "Death and Life", "Beethoven Frieze"],
+        redFlags: [
+          "Absence of real gold or silver leaf (Klimt always used actual metal leaf, never gold paint)",
+          "Decorative patterning inconsistent with his documented ornamental vocabulary",
+          "Export permits post-dating the claimed provenance chain",
+          "Gaps in provenance around 1938–1945 — many Klimts were looted during Nazi occupation of Austria",
+        ],
+        portrait: null,
+        signatureRef: null,
+      },
+    ];
+
+    // ─── Shop Items ──────────────────────────────────────────────────────────
+
+    const SHOP_ITEMS = [
+      {
+        id: "book",
+        name: "The Connoisseur's Handbook",
+        desc: "A reference guide to famous painters — their techniques, palettes, signatures and authentication red flags. Open it any time during an investigation.",
+        icon: "📖",
+        cost: 300,
+      },
+      {
+        id: "magnifier",
+        name: "Forensic Magnifier",
+        desc: "Reveals hidden technical details in paintings. Coming soon in a future update.",
+        icon: "🔬",
+        cost: 1200,
+        comingSoon: true,
+      },
+      {
+        id: "archive",
+        name: "Interpol Art Archive",
+        desc: "Direct access to expanded theft and forgery databases across 40 countries. Coming soon.",
+        icon: "🗄️",
+        cost: 2500,
+        comingSoon: true,
+      },
+    ];
+
+    // ─── Shop ─────────────────────────────────────────────────────────────────
+
+    function Shop({ coins, unlockedItems, onUnlock, onClose }) {
+      const mono  = "'Special Elite', monospace";
+      const serif = "'Playfair Display', Georgia, serif";
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(10,7,3,0.88)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 20px" }} onClick={onClose}>
+          <div style={{ width: "100%", maxWidth: 520, background: "#1a1410", border: "1px solid #5a3e2b", boxShadow: "0 30px 80px rgba(0,0,0,0.7)" }} onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ padding: "22px 28px 18px", borderBottom: "1px solid #3a2a1a" }}>
+              <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: 3, color: "#8b6a40", textTransform: "uppercase", marginBottom: 6 }}>Bureau Supply Office</div>
+              <div style={{ fontFamily: serif, fontSize: 22, fontWeight: 700, color: "#f2ead8", marginBottom: 6 }}>Investigator's Shop</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 16 }}>🪙</span>
+                <span style={{ fontFamily: mono, fontSize: 14, color: "#d4a85a", letterSpacing: 1 }}>{coins.toLocaleString()} coins available</span>
+              </div>
+            </div>
+
+            {/* Items */}
+            <div style={{ padding: "16px 28px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+              {SHOP_ITEMS.map(item => {
+                const owned   = unlockedItems.has(item.id);
+                const canAfford = coins >= item.cost && !item.comingSoon;
+                return (
+                  <div key={item.id} style={{ display: "flex", gap: 16, alignItems: "flex-start", padding: "16px", background: owned ? "#1e2a1e" : "#211c17", border: `1px solid ${owned ? "#2a6a3a" : "#3a2a1a"}` }}>
+                    <div style={{ fontSize: 28, flexShrink: 0, paddingTop: 2 }}>{item.icon}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontFamily: serif, fontSize: 15, fontWeight: 700, color: "#f2ead8" }}>{item.name}</span>
+                        {owned && <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: 2, color: "#4a9a5a", textTransform: "uppercase" }}>✓ Owned</span>}
+                        {item.comingSoon && <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: 2, color: "#8b6a40", textTransform: "uppercase" }}>Soon</span>}
+                      </div>
+                      <p style={{ fontFamily: serif, fontSize: 12, color: "#a08878", lineHeight: 1.55, margin: "0 0 10px" }}>{item.desc}</p>
+                      {!owned && (
+                        <button
+                          disabled={!canAfford}
+                          onClick={() => { onUnlock(item.id, item.cost); }}
+                          style={{ padding: "7px 18px", fontFamily: mono, fontSize: 11, letterSpacing: 1.5, background: canAfford ? "#3a2510" : "#2a2420", color: canAfford ? "#d4a85a" : "#5a4a38", border: `1px solid ${canAfford ? "#8b6a40" : "#3a2a1a"}`, textTransform: "uppercase" }}
+                        >
+                          {item.comingSoon ? "Not available" : `🪙 ${item.cost.toLocaleString()} — Purchase`}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: "12px 28px 16px", borderTop: "1px solid #3a2a1a", textAlign: "right" }}>
+              <button onClick={onClose} style={{ padding: "9px 22px", fontFamily: mono, fontSize: 11, letterSpacing: 2, background: "transparent", color: "#8b7355", border: "1px solid #3a2a1a", textTransform: "uppercase" }}>Close</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── CaseEditor (editor shell) ────────────────────────────────────────────
+
+    function CaseEditor({ initialCase, onSave, onCancel }) {
+      const [c, setC]             = useState(deepClone(initialCase || EMPTY_CASE));
+      const [section, setSection] = useState("general");
+      const [evTab, setEvTab]     = useState("provenance");
+      const [gameMode, setGameMode] = useState(false);
+      const [toast, setToast]     = useState(null);
+      const fileRef   = useRef(null);
+      const importRef = useRef(null);
+
+      const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2500); };
+
+      const update = useCallback(fn => {
+        setC(prev => { const next = deepClone(prev); fn(next); return next; });
+      }, []);
+
+      const handleImage = e => {
+        const file = e.target.files?.[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => update(d => { d.painting.image = ev.target.result; });
+        reader.readAsDataURL(file);
+      };
+
+      const exportJSON = () => {
+        const data = deepClone(c);
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url; a.download = `case-${data.painting.title || "untitled"}.json`; a.click();
+        URL.revokeObjectURL(url);
+        showToast("Exported!");
+      };
+
+      const importJSON = e => {
+        const file = e.target.files?.[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+          try {
+            const data = JSON.parse(ev.target.result);
+            if (!data.evidenceOrder) data.evidenceOrder = Object.keys(data.evidence || {});
+            setC(data); showToast("Imported!");
+          } catch { showToast("Invalid JSON file"); }
+        };
+        reader.readAsText(file);
+      };
+
+      const addDialogue   = ()    => update(d => { d.seller.dialogue.push(""); });
+      const removeDialogue = i   => update(d => { d.seller.dialogue.splice(i, 1); });
+      const addEvItem      = tab => update(d => { d.evidence[tab].items.push({ ...EMPTY_ITEM }); });
+      const removeEvItem   = (tab, i) => update(d => { d.evidence[tab].items.splice(i, 1); });
+
+      const addEvTab = () => {
+        const key = `custom_${Date.now()}`;
+        update(d => { d.evidence[key] = { title: "New Tab", items: [{ ...EMPTY_ITEM }] }; d.evidenceOrder.push(key); });
+        setEvTab(key);
+      };
+      const removeEvTab = key => {
+        update(d => { delete d.evidence[key]; d.evidenceOrder = d.evidenceOrder.filter(k => k !== key); });
+        setEvTab(c.evidenceOrder.find(k => k !== key) || "provenance");
+      };
+
+      const addQuestion    = ()       => update(d => { d.questions.push(deepClone(EMPTY_QUESTION)); });
+      const removeQuestion = i        => update(d => { d.questions.splice(i, 1); });
+      const addOption      = qi       => update(d => { d.questions[qi].options.push({ ...EMPTY_OPTION }); });
+      const removeOption   = (qi, oi) => update(d => { d.questions[qi].options.splice(oi, 1); });
+      const toggleFollowUp = (qi, oi) => update(d => {
+        const opt = d.questions[qi].options[oi];
+        opt.followUp = opt.followUp ? null : { question: "", options: [{ ...EMPTY_OPTION }, { ...EMPTY_OPTION }] };
+      });
+
+      if (gameMode) return <GameView c={c} onBack={() => setGameMode(false)} />;
+
+      const evTabs = c.evidenceOrder.filter(k => c.evidence[k]);
+      const sections = [
+        { key: "general",   label: "🎨 Painting"   },
+        { key: "seller",    label: "🗣 Seller"      },
+        { key: "evidence",  label: "📋 Evidence"   },
+        { key: "questions", label: "❓ Questions"  },
+        { key: "verdict",   label: "⚖️ Verdict"    },
+      ];
+
+      return (
+        <div style={SE.page}>
+          <style>{editorCSS}</style>
+          {toast && <div style={SE.toast}>{toast}</div>}
+
+          <div style={SE.header}>
+            <div>
+              <div style={SE.stamp}>CASE EDITOR</div>
+              <h1 style={SE.title}>{c.painting.title || "New Case"}</h1>
+            </div>
+            <div style={SE.actions}>
+              <button style={SE.btn} onClick={onCancel}>← Back</button>
+              <button style={SE.btn} onClick={() => setGameMode(true)}>👁 Preview</button>
+              <button style={SE.btn} onClick={exportJSON}>⬇ Export</button>
+              <button style={SE.btn} onClick={() => importRef.current?.click()}>⬆ Import</button>
+              <input ref={importRef} type="file" accept=".json" onChange={importJSON} style={{ display: "none" }} />
+              <button style={{ ...SE.btn, color: "#f87171" }} onClick={() => { setC(deepClone(EMPTY_CASE)); showToast("Cleared"); }}>🗑 Clear</button>
+              <button style={{ ...SE.btn, background: "#2d5a3d", color: "#fff", borderColor: "#2d5a3d" }} onClick={() => { onSave(c); showToast("Saved!"); }}>💾 Save</button>
+            </div>
+          </div>
+
+          <div style={SE.nav}>
+            {sections.map(s => (
+              <button key={s.key} style={section === s.key ? { ...SE.navBtn, ...SE.navBtnActive } : SE.navBtn} onClick={() => setSection(s.key)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={SE.panel}>
+
+            {section === "general" && (
+              <div style={SE.fields}>
+                <div style={SE.row}>
+                  <div style={SE.half}><ELabel>Title</ELabel><EInput value={c.painting.title} onChange={v => update(d => { d.painting.title = v; })} placeholder="e.g. Starry Night — Study" /></div>
+                  <div style={SE.half}><ELabel>Claimed Artist</ELabel><EInput value={c.painting.artist} onChange={v => update(d => { d.painting.artist = v; })} placeholder="e.g. Vincent van Gogh" /></div>
+                </div>
+                <div style={SE.row}>
+                  <div style={SE.third}><ELabel>Year Claimed</ELabel><EInput value={c.painting.year_claimed} onChange={v => update(d => { d.painting.year_claimed = v; })} placeholder="1889" /></div>
+                  <div style={SE.third}><ELabel>Movement</ELabel><EInput value={c.painting.movement} onChange={v => update(d => { d.painting.movement = v; })} placeholder="Post-Impressionism" /></div>
+                  <div style={SE.third}><ELabel>Emoji</ELabel><EInput value={c.painting.emoji} onChange={v => update(d => { d.painting.emoji = v; })} placeholder="🌙" /></div>
+                </div>
+                <ELabel>Description</ELabel>
+                <ETextarea value={c.painting.description} onChange={v => update(d => { d.painting.description = v; })} placeholder="What does the painting look like? Set the scene for the player." rows={3} />
+                <ELabel>Painting Image</ELabel>
+                <div style={SE.imageWrap}>
+                  {c.painting.image ? (
+                    <div style={{ position: "relative", display: "inline-block" }}>
+                      <img src={c.painting.image} alt="" style={SE.imgPreview} />
+                      <button style={SE.imgRemove} onClick={() => update(d => { d.painting.image = null; })}>✕ Remove</button>
+                    </div>
+                  ) : (
+                    <button style={SE.uploadBtn} onClick={() => fileRef.current?.click()}>📷 Upload Image</button>
+                  )}
+                  <input ref={fileRef} type="file" accept="image/*" onChange={handleImage} style={{ display: "none" }} />
+                </div>
+              </div>
+            )}
+
+            {section === "seller" && (
+              <div style={SE.fields}>
+                <div style={SE.row}>
+                  <div style={SE.half}><ELabel>Seller Name</ELabel><EInput value={c.seller.name} onChange={v => update(d => { d.seller.name = v; })} placeholder="Henri Beaumont" /></div>
+                  <div style={SE.half}><ELabel>Origin</ELabel><EInput value={c.seller.origin} onChange={v => update(d => { d.seller.origin = v; })} placeholder="Geneva, Switzerland" /></div>
+                </div>
+                <ELabel>Dialogue Lines</ELabel>
+                <p style={SE.hint}>These appear one at a time as the seller's pitch. The player reads through them looking for inconsistencies.</p>
+                {c.seller.dialogue.map((line, i) => (
+                  <div key={i} style={SE.listRow}>
+                    <span style={SE.listNum}>{i + 1}</span>
+                    <ETextarea value={line} onChange={v => update(d => { d.seller.dialogue[i] = v; })} placeholder={`Dialogue line ${i + 1}...`} rows={2} style={{ flex: 1 }} />
+                    {c.seller.dialogue.length > 1 && <button style={SE.removeBtn} onClick={() => removeDialogue(i)}>✕</button>}
+                  </div>
+                ))}
+                <button style={SE.addBtn} onClick={addDialogue}>+ Add Line</button>
+              </div>
+            )}
+
+            {section === "evidence" && (
+              <div style={SE.fields}>
+                <div style={SE.evTabs}>
+                  {evTabs.map(k => (
+                    <button key={k} style={evTab === k ? { ...SE.evTab, ...SE.evTabActive } : SE.evTab} onClick={() => setEvTab(k)}>
+                      {c.evidence[k]?.title || k}
+                    </button>
+                  ))}
+                  <button style={SE.evTabAdd} onClick={addEvTab}>+</button>
+                </div>
+                {c.evidence[evTab] && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={SE.row}>
+                      <div style={{ flex: 1 }}>
+                        <ELabel>Tab Title</ELabel>
+                        <EInput value={c.evidence[evTab].title} onChange={v => update(d => { d.evidence[evTab].title = v; })} placeholder="Tab name" />
+                      </div>
+                      {!["provenance","technical","database","seller_bg"].includes(evTab) && (
+                        <button style={{ ...SE.removeBtn, alignSelf: "flex-end", marginBottom: 4 }} onClick={() => removeEvTab(evTab)}>🗑 Remove Tab</button>
+                      )}
+                    </div>
+                    <ELabel>Evidence Items</ELabel>
+                    <p style={SE.hint}>Mark items as "flaggable" if they contain suspicious info the player should catch. "Critical" flags are highlighted with ⚠ in-game.</p>
+                    {c.evidence[evTab].items.map((item, i) => (
+                      <div key={i} style={SE.evItem}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <span style={SE.listNum}>{i + 1}</span>
+                          <ETextarea value={item.text} onChange={v => update(d => { d.evidence[evTab].items[i].text = v; })} placeholder="Evidence text..." rows={2} style={{ flex: 1 }} />
+                          {c.evidence[evTab].items.length > 1 && <button style={SE.removeBtn} onClick={() => removeEvItem(evTab, i)}>✕</button>}
+                        </div>
+                        <div style={{ display: "flex", gap: 16, marginTop: 8, paddingLeft: 28 }}>
+                          <label style={SE.check}>
+                            <input type="checkbox" checked={item.flag} onChange={() => update(d => { d.evidence[evTab].items[i].flag = !item.flag; })} />
+                            <span>🚩 Flaggable</span>
+                          </label>
+                          {item.flag && (
+                            <label style={SE.check}>
+                              <input type="checkbox" checked={item.critical} onChange={() => update(d => { d.evidence[evTab].items[i].critical = !item.critical; })} />
+                              <span>⚠ Critical</span>
+                            </label>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    <button style={SE.addBtn} onClick={() => addEvItem(evTab)}>+ Add Item</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {section === "questions" && (
+              <div style={SE.fields}>
+                <p style={SE.hint}>Add multiple-choice questions the player can ask during investigation. Each option can have a seller response and an optional follow-up that branches deeper.</p>
+                {c.questions.length === 0 && <div style={SE.empty}>No questions yet. Add one to create interactive interrogation moments.</div>}
+                {c.questions.map((q, qi) => (
+                  <div key={qi} style={SE.qCard}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={SE.qNum}>Q{qi + 1}</span>
+                      <button style={SE.removeBtn} onClick={() => removeQuestion(qi)}>✕</button>
+                    </div>
+                    <ELabel>Question Text</ELabel>
+                    <ETextarea value={q.question} onChange={v => update(d => { d.questions[qi].question = v; })} placeholder="What question can the player ask?" rows={2} />
+                    <ELabel>Trigger</ELabel>
+                    <select style={SE.select} value={q.trigger} onChange={e => update(d => { d.questions[qi].trigger = e.target.value; })}>
+                      <option value="anytime">Available anytime</option>
+                      <option value="after_seller">After seller dialogue</option>
+                      <option value="after_evidence">After viewing evidence</option>
+                    </select>
+                    <ELabel>Options</ELabel>
+                    {q.options.map((opt, oi) => (
+                      <div key={oi} style={SE.optBlock}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={SE.optLetter}>{String.fromCharCode(65 + oi)}</span>
+                          {q.options.length > 2 && <button style={SE.removeBtnSm} onClick={() => removeOption(qi, oi)}>✕</button>}
+                        </div>
+                        <EInput value={opt.text} onChange={v => update(d => { d.questions[qi].options[oi].text = v; })} placeholder="Option text..." />
+                        <ETextarea value={opt.response} onChange={v => update(d => { d.questions[qi].options[oi].response = v; })} placeholder="Seller's response if this option is chosen..." rows={2} />
+                        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                          <label style={SE.check}>
+                            <input type="checkbox" checked={!!opt.flag} onChange={() => update(d => { d.questions[qi].options[oi].flag = !opt.flag; })} />
+                            <span>Response is suspicious</span>
+                          </label>
+                          {opt.flag && (
+                            <label style={SE.check}>
+                              <input type="checkbox" checked={!!opt.critical} onChange={() => update(d => { d.questions[qi].options[oi].critical = !opt.critical; })} />
+                              <span>Critical (⚠)</span>
+                            </label>
+                          )}
+                          <label style={SE.check}>
+                            <input type="checkbox" checked={!!opt.followUp} onChange={() => toggleFollowUp(qi, oi)} />
+                            <span>Has follow-up question</span>
+                          </label>
+                        </div>
+                        {opt.followUp && (
+                          <div style={SE.followUp}>
+                            <ELabel>↳ Follow-up Question</ELabel>
+                            <ETextarea value={opt.followUp.question} onChange={v => update(d => { d.questions[qi].options[oi].followUp.question = v; })} placeholder="Follow-up question..." rows={2} />
+                            {opt.followUp.options.map((fo, fi) => (
+                              <div key={fi} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                                <span style={SE.optLetter}>{String.fromCharCode(65 + fi)}</span>
+                                <div style={{ flex: 1 }}>
+                                  <EInput value={fo.text} onChange={v => update(d => { d.questions[qi].options[oi].followUp.options[fi].text = v; })} placeholder={`Sub-option ${fi + 1}...`} />
+                                  <ETextarea value={fo.response} onChange={v => update(d => { d.questions[qi].options[oi].followUp.options[fi].response = v; })} placeholder="Response..." rows={1} />
+                                  <div style={{ display: "flex", gap: 12 }}>
+                                    <label style={SE.check}>
+                                      <input type="checkbox" checked={!!fo.flag} onChange={() => update(d => { d.questions[qi].options[oi].followUp.options[fi].flag = !fo.flag; })} />
+                                      <span>Suspicious</span>
+                                    </label>
+                                    {fo.flag && <label style={SE.check}>
+                                      <input type="checkbox" checked={!!fo.critical} onChange={() => update(d => { d.questions[qi].options[oi].followUp.options[fi].critical = !fo.critical; })} />
+                                      <span>Critical</span>
+                                    </label>}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            <button style={SE.addBtnSm} onClick={() => update(d => { d.questions[qi].options[oi].followUp.options.push({ ...EMPTY_OPTION }); })}>+ Sub-option</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {q.options.length < 4 && <button style={SE.addBtnSm} onClick={() => addOption(qi)}>+ Add Option</button>}
+                  </div>
+                ))}
+                <button style={SE.addBtn} onClick={addQuestion}>+ Add Question</button>
+              </div>
+            )}
+
+            {section === "verdict" && (
+              <div style={SE.fields}>
+                <ELabel>Correct Verdict</ELabel>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {["AUTHENTIC","FORGERY","STOLEN"].map(v => (
+                    <button key={v} style={{ ...SE.verdictBtn, ...(c.verdict === v ? SE.verdictActive[v] : {}), opacity: c.verdict === v ? 1 : 0.4 }} onClick={() => update(d => { d.verdict = v; })}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+                <ELabel>Explanation</ELabel>
+                <p style={SE.hint}>Shown after the player makes their verdict. Explain why this piece is authentic/forgery/stolen and what clues pointed to the answer.</p>
+                <ETextarea value={c.explanation} onChange={v => update(d => { d.explanation = v; })} placeholder="The real painting has been at the National Gallery since 1842..." rows={5} />
+              </div>
+            )}
+          </div>
+
+          <div style={SE.footer}>
+            <span style={SE.footerText}>
+              {Object.values(c.evidence).reduce((n, t) => n + t.items.filter(i => i.text).length, 0)} evidence items · {c.seller.dialogue.filter(Boolean).length} dialogue lines · {c.questions.length} questions
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── GameView (dossier mode) ──────────────────────────────────────────────
+
+    const REWARDS = {
+      AUTHENTIC: { icon: "🏛️", label: "Authenticated",   text: "Work confirmed genuine. Certificate of Authenticity issued." },
+      FORGERY:   { icon: "🔍", label: "Forgery Exposed",  text: "Counterfeit identified. Case referred to the authorities." },
+      STOLEN:    { icon: "⛓️", label: "Art Recovered",    text: "Stolen work flagged. Restitution proceedings initiated." },
+    };
+    const STAMP_COLOR = { AUTHENTIC: "#2a6a3a", FORGERY: "#8b1a1a", STOLEN: "#7a5500" };
+    const STAMP_BG    = { AUTHENTIC: "#f0faf2",  FORGERY: "#fdf0f0",  STOLEN: "#fdf8ec"  };
+
+    function GameView({ c, onBack, onSolve, onAward, coins, unlockedItems }) {
+      const [tab, setTab]               = useState("seller");
+      const [dlgLine, setDlgLine]       = useState(0);
+      const [qState, setQState]         = useState({});
+      const [openQ, setOpenQ]           = useState(null);
+      const [visitedEv, setVisitedEv]   = useState(false);
+      const [viewerOpen, setViewerOpen] = useState(false);
+      const [playerVerdict, setVerdict] = useState(null);
+      const [submitted, setSubmitted]   = useState(false);
+      const [showBook, setShowBook]     = useState(false);
+      const [playerFlagged, setPlayerFlagged] = useState(new Set());
+      const [sessionCoins, setSessionCoins]   = useState(0);
+      const [flagStats, setFlagStats]         = useState({ correct: 0, wrong: 0, correctCoins: 0, flagTotal: 0 });
+
+      const dlgLines = c.seller.dialogue.filter(Boolean);
+      const dlgDone  = dlgLines.length === 0 || dlgLine >= dlgLines.length - 1;
+      const evTabs   = c.evidenceOrder.filter(k => c.evidence[k]);
+      const hasQs    = c.questions.length > 0;
+
+      const goTab = t => { setTab(t); if (evTabs.includes(t)) setVisitedEv(true); };
+
+      const availableQs = c.questions.map((q, qi) => ({ q, qi })).filter(({ q }) => {
+        if (q.trigger === "after_seller"   && !dlgDone)   return false;
+        if (q.trigger === "after_evidence" && !visitedEv) return false;
+        return true;
+      });
+
+      const resetGame = () => {
+        setDlgLine(0); setQState({}); setOpenQ(null);
+        setVisitedEv(false); setVerdict(null); setSubmitted(false);
+        setTab("seller"); setPlayerFlagged(new Set()); setSessionCoins(0);
+        setFlagStats({ correct: 0, wrong: 0, correctCoins: 0 });
+      };
+
+      const correct = playerVerdict === c.verdict;
+
+      const handleFlagItem = key => {
+        setPlayerFlagged(prev => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key); else next.add(key);
+          return next;
+        });
+      };
+
+      const handleSubmit = () => {
+        let flagTotal = 0, correctCount = 0, wrongCount = 0, correctCoins = 0;
+
+        // Score evidence flags
+        evTabs.forEach(tabKey => {
+          (c.evidence[tabKey]?.items || []).filter(i => i.text).forEach((item, idx) => {
+            const wasFlagged = playerFlagged.has(`ev-${tabKey}-${idx}`);
+            if (wasFlagged && item.flag)  { const gain = item.critical ? 150 : 75; flagTotal += gain; correctCount++; correctCoins += gain; }
+            if (wasFlagged && !item.flag) { flagTotal -= 100; wrongCount++; }
+          });
+        });
+
+        // Score interrogation response flags
+        c.questions.forEach((q, qi) => {
+          const st = qState[qi];
+          if (st?.chosen !== undefined) {
+            const opt = q.options[st.chosen];
+            if (playerFlagged.has(`q-${qi}-${st.chosen}`)) {
+              if (opt?.flag)  { const gain = opt.critical ? 150 : 75; flagTotal += gain; correctCount++; correctCoins += gain; }
+              else            { flagTotal -= 100; wrongCount++; }
+            }
+            if (opt?.followUp && st.followChosen !== undefined) {
+              const fu = opt.followUp.options[st.followChosen];
+              if (playerFlagged.has(`q-${qi}-fu-${st.followChosen}`)) {
+                if (fu?.flag)  { const gain = fu.critical ? 150 : 75; flagTotal += gain; correctCount++; correctCoins += gain; }
+                else           { flagTotal -= 100; wrongCount++; }
+              }
+            }
+          }
+        });
+
+        const verdictCorrect = playerVerdict === c.verdict;
+        if (verdictCorrect) { if (onSolve) onSolve(); }
+        const total = verdictCorrect ? flagTotal + 500 : 0;
+        setFlagStats({ correct: correctCount, wrong: wrongCount, correctCoins, flagTotal });
+        setSessionCoins(total);
+        setSubmitted(true);
+        if (onAward && total > 0) onAward(total);
+      };
+
+      return (
+        <div style={SG.page}>
+          <style>{gameCSS}</style>
+
+          {showBook && <PaintersBook onClose={() => setShowBook(false)} />}
+
+          {/* Full-width top bar */}
+          <div style={SG.topBar}>
+            <button style={SG.navBtn} onClick={onBack}>← Exit file</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <div style={SG.fileRef}>Case file {c.id ? `#${c.id}` : "— draft —"}</div>
+              <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 13, color: "#8b6a40", letterSpacing: 1 }}>🪙 {(coins || 0).toLocaleString()}</div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                style={{ ...SG.navBtn, background: unlockedItems && unlockedItems.has("book") ? "#3a2510" : "#2a2420", color: unlockedItems && unlockedItems.has("book") ? "#d4a85a" : "#5a4a38", border: `1px solid ${unlockedItems && unlockedItems.has("book") ? "#8b6a40" : "#3a2a1a"}` }}
+                onClick={() => unlockedItems && unlockedItems.has("book") ? setShowBook(true) : null}
+                title={unlockedItems && unlockedItems.has("book") ? "Open Reference Book" : "Purchase in shop to unlock"}
+              >
+                📖 {unlockedItems && unlockedItems.has("book") ? "Reference" : "🔒 Reference"}
+              </button>
+              <button style={SG.navBtn} onClick={resetGame}>↺ Restart</button>
+            </div>
+          </div>
+
+          {/* Two-column body */}
+          <div style={SG.body}>
+
+            {/* LEFT: Painting panel */}
+            <div style={SG.leftPanel}>
+              <div style={SG.paintingArea}>
+                {c.painting.image
+                  ? <img src={c.painting.image} alt="" style={SG.paintingImg} onClick={() => setViewerOpen(true)} title="Click to examine" />
+                  : <div style={SG.paintingEmoji}>{c.painting.emoji}</div>
+                }
+                {submitted && (
+                  <div style={{ position: "absolute", inset: 0, background: correct ? "rgba(42,106,58,0.18)" : "rgba(139,26,26,0.18)", pointerEvents: "none" }} />
+                )}
+              </div>
+              <div style={SG.caseInfo}>
+                <div style={SG.caseLabel}>Subject of investigation</div>
+                <div style={SG.caseTitle}>{c.painting.title || "Untitled"}</div>
+                <div style={SG.caseMeta}>
+                  {c.painting.artist || "Unknown"}{c.painting.year_claimed ? ` · ${c.painting.year_claimed}` : ""}
+                </div>
+                {c.painting.movement && <div style={SG.caseMovement}>{c.painting.movement}</div>}
+                {c.painting.description && <div style={SG.caseDesc}>{c.painting.description}</div>}
+                <div style={{ marginTop: 14 }}>
+                  <span style={{
+                    ...SG.statusStamp,
+                    ...(submitted ? { color: correct ? "#2a6a3a" : "#8b1a1a", borderColor: correct ? "#2a6a3a" : "#8b1a1a", opacity: 0.9 } : {}),
+                  }}>
+                    {submitted ? (correct ? "Case Closed" : "Inconclusive") : "Under Review"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT: Investigation panel */}
+            <div style={SG.rightPanel}>
+
+              {/* Tab bar */}
+              <div style={SG.tabBar}>
+                {[
+                  { key: "seller", label: "Witness" },
+                  ...evTabs.map(k => ({ key: k, label: c.evidence[k].title })),
+                  ...(hasQs ? [{ key: "ask", label: "Interrogate" }] : []),
+                ].map(({ key, label }) => (
+                  <button key={key}
+                    style={tab === key ? { ...SG.tab, ...SG.tabActive } : SG.tab}
+                    onClick={() => goTab(key)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Scrollable content */}
+              <div style={SG.panel}>
+
+            {/* WITNESS */}
+            {tab === "seller" && (
+              <div>
+                <div style={SG.docTitle}>Witness Statement</div>
+                <div style={SG.rule} />
+                <div style={SG.deponent}>
+                  Deponent: <strong>{c.seller.name || "Unknown"}</strong>
+                  {c.seller.origin ? <span style={{ fontWeight: 400 }}> — {c.seller.origin}</span> : null}
+                </div>
+                {dlgLines.length === 0 && <p style={SG.dim}>No statement on record.</p>}
+                {dlgLines.slice(0, dlgLine + 1).map((line, i) => (
+                  <p key={i} style={{ ...SG.testimony, opacity: i < dlgLine ? 0.4 : 1 }} className="line-in">
+                    &#8220;{line}&#8221;
+                  </p>
+                ))}
+                {dlgLines.length > 0 && !dlgDone && (
+                  <button style={SG.continueBtn} onClick={() => setDlgLine(l => l + 1)}>
+                    Continue reading &rarr;&ensp;<span style={{ opacity: 0.4, fontSize: 11 }}>({dlgLine + 1} / {dlgLines.length})</span>
+                  </button>
+                )}
+                {dlgDone && dlgLines.length > 0 && <div style={SG.endMark}>— end of statement —</div>}
+              </div>
+            )}
+
+            {/* EVIDENCE */}
+            {evTabs.includes(tab) && c.evidence[tab] && (
+              <div>
+                <div style={SG.docTitle}>{c.evidence[tab].title}</div>
+                <div style={SG.rule} />
+                {c.evidence[tab].items.filter(i => i.text).map((item, i) => {
+                  const flagKey   = `ev-${tab}-${i}`;
+                  const isFlagged = playerFlagged.has(flagKey);
+                  const hitRight  = submitted && isFlagged && item.flag;
+                  const hitWrong  = submitted && isFlagged && !item.flag;
+                  const rowStyle  = hitRight  ? SG.evFlagged
+                                  : hitWrong  ? SG.evWrongFlag
+                                  : isFlagged ? SG.evPlayerFlagged
+                                  : {};
+                  return (
+                    <div key={i} style={{ ...SG.evItem, ...rowStyle }}>
+                      <span style={SG.evNum}>{i + 1}.</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={SG.evText}>{item.text}</div>
+                        {submitted && item.flag && (
+                          <div style={SG.evFlag}>{item.critical ? "⚠ Critical discrepancy" : "! Suspicious"}</div>
+                        )}
+                        {hitRight && (
+                          <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#2a6a3a", marginTop: 3, letterSpacing: 0.5 }}>✓ Correctly flagged — +{item.critical ? 150 : 75} 🪙</div>
+                        )}
+                        {hitWrong && (
+                          <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#8b1a1a", marginTop: 3, letterSpacing: 0.5 }}>✗ Wrong flag — −100 🪙 penalty</div>
+                        )}
+                        {isFlagged && !submitted && (
+                          <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#a08040", marginTop: 3, letterSpacing: 0.5 }}>⚑ Flagged</div>
+                        )}
+                      </div>
+                      {!submitted && (
+                        <button
+                          style={{ ...SG.evFlagBtn, ...(isFlagged ? SG.evFlagBtnActive : {}) }}
+                          onClick={() => handleFlagItem(flagKey)}
+                          title={isFlagged ? "Click to unflag" : "Flag as suspicious"}
+                        >{isFlagged ? "⚑" : "⚐"}</button>
+                      )}
+                    </div>
+                  );
+                })}
+                {!submitted && <p style={SG.dim}>Flag suspicious items. Wrong flags carry a −100 🪙 penalty — choose carefully.</p>}
+              </div>
+            )}
+
+            {/* INTERROGATE */}
+            {tab === "ask" && (
+              <div>
+                <div style={SG.docTitle}>Interrogation</div>
+                <div style={SG.rule} />
+                {c.questions.length === 0 && <p style={SG.dim}>No questions have been prepared for this case.</p>}
+                {c.questions.map((q, qi) => {
+                  const available = availableQs.some(a => a.qi === qi);
+                  const state = qState[qi];
+                  const answered = state?.chosen !== undefined;
+                  const isOpen = openQ === qi;
+
+                  if (!available) return (
+                    <div key={qi} style={SG.qLocked}>
+                      <span style={{ opacity: 0.4 }}>{q.question}</span>
+                      <span style={SG.qLockNote}>
+                        {q.trigger === "after_seller" ? " — read the full statement first" : " — examine the evidence first"}
+                      </span>
+                    </div>
+                  );
+
+                  if (!answered) return (
+                    <div key={qi} style={SG.qBlock}>
+                      <div style={SG.qTopic}>{q.question}</div>
+                      {isOpen ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={SG.optHint}>What do you say?</div>
+                          {q.options.filter(o => o.text).map((opt, oi) => (
+                            <button key={oi} style={SG.optBtn} onClick={() => { setQState(p => ({ ...p, [qi]: { chosen: oi } })); setOpenQ(null); }}>
+                              <span style={SG.optLetter}>{String.fromCharCode(65 + oi)}.</span>
+                              <span style={SG.optText}>&#8220;{opt.text}&#8221;</span>
+                            </button>
+                          ))}
+                          <button style={SG.cancelBtn} onClick={() => setOpenQ(null)}>— cancel</button>
+                        </div>
+                      ) : (
+                        <button style={SG.askBtn} onClick={() => setOpenQ(qi)}>Ask about this →</button>
+                      )}
+                    </div>
+                  );
+
+                  const chosen    = q.options[state.chosen];
+                  const fu        = chosen?.followUp;
+                  const sellerName = c.seller.name?.split(" ")[0] || "Seller";
+
+                  const FlagBtn = ({ flagKey, opt }) => {
+                    const isFlagged = playerFlagged.has(flagKey);
+                    const hitRight  = submitted && isFlagged && opt?.flag;
+                    const hitWrong  = submitted && isFlagged && !opt?.flag;
+                    return (
+                      <div style={{ marginTop: 4 }}>
+                        {!submitted && (
+                          <button
+                            style={{ ...SG.evFlagBtn, ...(isFlagged ? SG.evFlagBtnActive : {}), fontSize: 12, padding: "3px 7px" }}
+                            onClick={() => handleFlagItem(flagKey)}
+                            title={isFlagged ? "Click to unflag" : "Flag this response as suspicious"}
+                          >{isFlagged ? "⚑ Flagged" : "⚐ Flag response"}</button>
+                        )}
+                        {hitRight && <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#2a6a3a", marginTop: 2 }}>✓ Correctly flagged — +{opt.critical ? 150 : 75} 🪙</div>}
+                        {hitWrong && <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#8b1a1a", marginTop: 2 }}>✗ Wrong flag — −100 🪙 penalty</div>}
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <div key={qi} style={SG.qBlock}>
+                      <div style={{ ...SG.qTopic, opacity: 0.45 }}>{q.question}</div>
+                      <div style={SG.exchange}>
+                        <div style={SG.youLine}>
+                          <span style={SG.youTag}>You</span>
+                          <span style={SG.youSaid}>&#8220;{chosen?.text}&#8221;</span>
+                        </div>
+                        {chosen?.response && (
+                          <div style={{ ...SG.themLine, flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+                            <div style={{ display: "flex", gap: 9 }}>
+                              <span style={SG.themTag}>{sellerName}</span>
+                              <span style={SG.themSaid}>&#8220;{chosen.response}&#8221;</span>
+                            </div>
+                            <FlagBtn flagKey={`q-${qi}-${state.chosen}`} opt={chosen} />
+                          </div>
+                        )}
+                        {fu && state.followChosen === undefined && (
+                          <div style={SG.fuWrap}>
+                            <div style={SG.fuPrompt}>{fu.question}</div>
+                            <div style={SG.optHint}>What do you say?</div>
+                            {fu.options.filter(o => o.text).map((fo, fi) => (
+                              <button key={fi} style={SG.optBtn} onClick={() => setQState(p => ({ ...p, [qi]: { ...p[qi], followChosen: fi } }))}>
+                                <span style={SG.optLetter}>{String.fromCharCode(65 + fi)}.</span>
+                                <span style={SG.optText}>&#8220;{fo.text}&#8221;</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {fu && state.followChosen !== undefined && (
+                          <div style={SG.fuWrap}>
+                            <div style={SG.fuPrompt}>{fu.question}</div>
+                            <div style={SG.youLine}>
+                              <span style={SG.youTag}>You</span>
+                              <span style={SG.youSaid}>&#8220;{fu.options[state.followChosen]?.text}&#8221;</span>
+                            </div>
+                            {fu.options[state.followChosen]?.response && (
+                              <div style={{ ...SG.themLine, flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+                                <div style={{ display: "flex", gap: 9 }}>
+                                  <span style={SG.themTag}>{sellerName}</span>
+                                  <span style={SG.themSaid}>&#8220;{fu.options[state.followChosen].response}&#8221;</span>
+                                </div>
+                                <FlagBtn flagKey={`q-${qi}-fu-${state.followChosen}`} opt={fu.options[state.followChosen]} />
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+              {/* Verdict / Result — fixed at bottom of right panel */}
+              {!submitted ? (
+                <div style={SG.verdictBar}>
+                  <div style={SG.verdictLabel}>Official assessment</div>
+                  <div style={SG.verdictRow}>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      {["AUTHENTIC", "FORGERY", "STOLEN"].map(v => (
+                        <button key={v}
+                          style={{ ...SG.verdictBtn, ...(playerVerdict === v ? SG.verdictSel[v] : {}) }}
+                          onClick={() => setVerdict(v)}>
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                    <button style={{ ...SG.submitBtn, opacity: playerVerdict ? 1 : 0.3 }} disabled={!playerVerdict} onClick={handleSubmit}>
+                      File report →
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={SG.resultBar}>
+                  {correct ? (
+                    <div style={SG.rewardWrap} className="stamp-in">
+                      <div style={{ ...SG.badgeSeal, color: STAMP_COLOR[c.verdict], borderColor: STAMP_COLOR[c.verdict], background: STAMP_BG[c.verdict] }}>
+                        <span style={{ fontSize: 28 }}>{REWARDS[c.verdict].icon}</span>
+                      </div>
+                      <div>
+                        <div style={{ ...SG.rewardTitle, color: STAMP_COLOR[c.verdict] }}>{REWARDS[c.verdict].label}</div>
+                        <div style={SG.rewardSub}>{REWARDS[c.verdict].text}</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={SG.incorrectWrap}>
+                      <div style={SG.incorrectTitle}>Incorrect Assessment</div>
+                      <div style={SG.incorrectSub}>
+                        Correct verdict: <span style={{ color: STAMP_COLOR[c.verdict], fontFamily: "'Special Elite', monospace", letterSpacing: 1 }}>{c.verdict}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Scoring breakdown */}
+                  <div style={{ background: correct ? "#f8f4ec" : "#fdf5f5", border: `1px solid ${correct ? "#d8c8a8" : "#e8b8b8"}`, padding: "14px 16px", marginBottom: 14 }}>
+                    <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 3, color: "#8b6a40", textTransform: "uppercase", marginBottom: 10 }}>Score breakdown</div>
+                    {correct ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                        {flagStats.correct > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'Playfair Display', serif", fontSize: 13, color: "#2a5a2a" }}>
+                            <span>Correct flags ({flagStats.correct})</span>
+                            <span style={{ fontFamily: "'Special Elite', monospace" }}>+{flagStats.correctCoins} 🪙</span>
+                          </div>
+                        )}
+                        {flagStats.wrong > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'Playfair Display', serif", fontSize: 13, color: "#8b1a1a" }}>
+                            <span>Wrong flags ({flagStats.wrong} × −100)</span>
+                            <span style={{ fontFamily: "'Special Elite', monospace" }}>−{flagStats.wrong * 100} 🪙</span>
+                          </div>
+                        )}
+                        {flagStats.correct === 0 && flagStats.wrong === 0 && (
+                          <div style={{ fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 13, color: "#a08878" }}>No items flagged</div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", fontFamily: "'Playfair Display', serif", fontSize: 13, color: "#2a5a2a" }}>
+                          <span>Correct verdict</span>
+                          <span style={{ fontFamily: "'Special Elite', monospace" }}>+500 🪙</span>
+                        </div>
+                        <div style={{ borderTop: "1px solid #c8b898", marginTop: 4, paddingTop: 6, display: "flex", justifyContent: "space-between", fontFamily: "'Special Elite', monospace", fontSize: 13, color: sessionCoins > 0 ? "#2a5a2a" : "#8b1a1a", letterSpacing: 1 }}>
+                          <span>TOTAL</span>
+                          <span>+{sessionCoins} 🪙</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 13, color: "#8b1a1a" }}>Wrong verdict — no coins awarded.</div>
+                        {(flagStats.correct > 0 || flagStats.wrong > 0) && (
+                          <div style={{ fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 12, color: "#a08878" }}>
+                            You had {flagStats.correct} correct flag{flagStats.correct !== 1 ? "s" : ""}{flagStats.wrong > 0 ? ` and ${flagStats.wrong} wrong flag${flagStats.wrong !== 1 ? "s" : ""}` : ""} — these only pay out on a correct verdict.
+                          </div>
+                        )}
+                        <div style={{ borderTop: "1px solid #e8b8b8", marginTop: 2, paddingTop: 6, display: "flex", justifyContent: "space-between", fontFamily: "'Special Elite', monospace", fontSize: 13, color: "#8b1a1a", letterSpacing: 1 }}>
+                          <span>TOTAL</span>
+                          <span>0 🪙</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {c.explanation && (
+                    <div style={SG.resultNotes}>
+                      <div style={SG.resultExplLabel}>Case notes</div>
+                      <p style={SG.resultExplText}>{c.explanation}</p>
+                    </div>
+                  )}
+                  <button style={SG.retryBtn} onClick={resetGame}>Investigate again</button>
+                </div>
+              )}
+            </div>{/* end rightPanel */}
+          </div>{/* end body */}
+
+          {viewerOpen && c.painting.image && (
+            <PaintingViewer image={c.painting.image} title={c.painting.title} artist={c.painting.artist} year={c.painting.year_claimed} onClose={() => setViewerOpen(false)} />
+          )}
+        </div>
+      );
+    }
+
+    // ─── PaintingViewer ───────────────────────────────────────────────────────
+
+    function PaintingViewer({ image, title, artist, year, onClose }) {
+      const [magnifier, setMagnifier] = useState(false);
+      const [pos, setPos]             = useState({ x: 0, y: 0, w: 1, h: 1, over: false });
+      const imgRef = useRef(null);
+      const ZOOM   = 3.5;
+      const LENS   = 200;
+
+      const onMove = e => {
+        if (!imgRef.current) return;
+        const r = imgRef.current.getBoundingClientRect();
+        setPos({
+          x:    Math.max(0, Math.min(e.clientX - r.left, r.width)),
+          y:    Math.max(0, Math.min(e.clientY - r.top,  r.height)),
+          w:    r.width,
+          h:    r.height,
+          over: true,
+        });
+      };
+
+      const bgX = -(pos.x * ZOOM - LENS / 2);
+      const bgY = -(pos.y * ZOOM - LENS / 2);
+
+      return (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 9500,
+            background: "rgba(20,20,20,0.97)",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center",
+            padding: "20px",
+            fontFamily: "'Bebas Neue', sans-serif",
+          }}
+          onClick={e => e.target === e.currentTarget && onClose()}
+        >
+          {/* toolbar */}
+          <div style={{
+            width: "100%", maxWidth: 920,
+            display: "flex", justifyContent: "space-between", alignItems: "flex-end",
+            marginBottom: 14, paddingBottom: 12,
+            borderBottom: "1px solid #555555",
+          }}>
+            <div>
+              <div style={{ fontSize: 26, color: "#f2f2f2", letterSpacing: 2 }}>
+                {title || "UNTITLED"}
+              </div>
+              <div style={{ fontSize: 16, color: "#909090", letterSpacing: 1 }}>
+                {[artist, year].filter(Boolean).join("  //  ")}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                style={{
+                  fontSize: 18, padding: "6px 16px",
+                  background: magnifier ? "#1e1c18" : "transparent",
+                  color: magnifier ? "#e8e0d4" : "#706860",
+                  border: `1px solid ${magnifier ? "#d8d8d8" : "#555555"}`,
+                  fontFamily: "'Bebas Neue', sans-serif",
+                  letterSpacing: 1,
+                }}
+                onClick={() => setMagnifier(m => !m)}
+              >
+                🔍 {magnifier ? "LENS: ON" : "MAGNIFY"}
+              </button>
+              <button
+                style={{
+                  fontSize: 18, padding: "6px 16px",
+                  background: "transparent", color: "#c87878",
+                  border: "1px solid #cc888866",
+                  fontFamily: "'Bebas Neue', sans-serif",
+                }}
+                onClick={onClose}
+              >
+                [X] CLOSE
+              </button>
+            </div>
+          </div>
+
+          {/* image area */}
+          <div
+            style={{ position: "relative", display: "inline-block", lineHeight: 0 }}
+            onMouseMove={onMove}
+            onMouseLeave={() => setPos(p => ({ ...p, over: false }))}
+          >
+            <img
+              ref={imgRef}
+              src={image}
+              alt=""
+              style={{
+                maxWidth:  "min(88vw, 920px)",
+                maxHeight: "68vh",
+                display:   "block",
+                border:    "1px solid #353028",
+                cursor:    magnifier ? "none" : "default",
+              }}
+            />
+
+            {/* scanline overlay on the painting itself */}
+            <div style={{
+              position: "absolute", inset: 0, pointerEvents: "none",
+              background: "repeating-linear-gradient(to bottom, transparent 0px, transparent 1px, rgba(0,0,0,0.12) 1px, rgba(0,0,0,0.12) 2px)",
+            }} />
+
+            {/* magnifier lens */}
+            {magnifier && pos.over && (
+              <div style={{
+                position:        "absolute",
+                left:            pos.x - LENS / 2,
+                top:             pos.y - LENS / 2,
+                width:           LENS,
+                height:          LENS,
+                borderRadius:    "50%",
+                border:          "2px solid #d8d8d8",
+                backgroundImage: `url(${image})`,
+                backgroundSize:  `${pos.w * ZOOM}px ${pos.h * ZOOM}px`,
+                backgroundPosition: `${bgX}px ${bgY}px`,
+                backgroundRepeat:   "no-repeat",
+                pointerEvents:   "none",
+                boxShadow:       "0 0 0 4px #08070600, 0 0 28px rgba(0,0,0,0.95)",
+                overflow:        "hidden",
+              }}>
+                {/* crosshair at center of lens */}
+                <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+                  <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "rgba(220,220,220,0.4)", transform: "translateX(-50%)" }} />
+                  <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgba(220,220,220,0.4)", transform: "translateY(-50%)" }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* hint */}
+          <div style={{ marginTop: 14, fontSize: 14, color: "#707070", letterSpacing: 1 }}>
+            {magnifier
+              ? "// HOVER OVER PAINTING TO EXAMINE · CROSSHAIR MARKS CENTER · CLICK BACKGROUND TO CLOSE"
+              : "// ENABLE MAGNIFIER TO INSPECT DETAILS · CLICK BACKGROUND TO CLOSE"}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── Editor helper components ─────────────────────────────────────────────
+
+    function ELabel({ children }) { return <label style={SE.label}>{children}</label>; }
+
+    function EInput({ value, onChange, placeholder, style: sx }) {
+      return <input type="text" style={{ ...SE.input, ...sx }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />;
+    }
+
+    function ETextarea({ value, onChange, placeholder, rows = 3, style: sx }) {
+      return <textarea style={{ ...SE.textarea, ...sx }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} />;
+    }
+
+    // ─── Editor CSS ───────────────────────────────────────────────────────────
+
+    const editorCSS = `
+      @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap');
+      * { box-sizing: border-box; }
+      button { cursor: pointer; font-family: 'IBM Plex Mono', monospace; }
+      input, textarea, select { font-family: 'IBM Plex Mono', monospace; }
+      @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(-16px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+      ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #1a1814; } ::-webkit-scrollbar-thumb { background: #3a352e; }
+    `;
+
+    // ─── Game CSS ─────────────────────────────────────────────────────────────
+
+    const gameCSS = `
+      @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Special+Elite&family=Pinyon+Script&display=swap');
+      * { box-sizing: border-box; }
+      button { cursor: pointer; }
+      @keyframes lineIn { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+      @keyframes stampIn { from{opacity:0;transform:rotate(-3deg) scale(1.15)} to{opacity:1;transform:rotate(-3deg) scale(1)} }
+      @keyframes coinPop { 0%{opacity:0;transform:translateY(0) scale(0.8)} 20%{opacity:1;transform:translateY(-6px) scale(1.1)} 80%{opacity:1;transform:translateY(-18px) scale(1)} 100%{opacity:0;transform:translateY(-28px) scale(0.9)} }
+      .line-in { animation: lineIn 0.2s ease forwards; }
+      .stamp-in { animation: stampIn 0.3s cubic-bezier(0.2,0.8,0.3,1) forwards; }
+      .coin-pop { animation: coinPop 1.4s ease forwards; }
+      button:hover { opacity: 0.65 !important; }
+      ::-webkit-scrollbar { width: 4px; }
+      ::-webkit-scrollbar-track { background: #ede6d8; }
+      ::-webkit-scrollbar-thumb { background: #c8b898; }
+    `;
+
+    // ─── Editor styles ────────────────────────────────────────────────────────
+
+    const ea = "#8b7355", ebg = "#1a1814", ecard = "#252220", eborder = "#3a352e",
+          ecream = "#f5f0e8", emuted = "#908878", einp = "#1e1c18";
+
+    const SE = {
+      page:      { fontFamily: "'IBM Plex Mono', monospace", background: ebg, minHeight: "100vh", color: ecream, padding: "16px" },
+      toast:     { position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", background: ea, color: "#fff", padding: "10px 24px", borderRadius: 6, fontSize: 13, fontWeight: 600, zIndex: 999, animation: "toastIn 0.3s ease" },
+      header:    { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12, marginBottom: 16 },
+      stamp:     { fontSize: 10, letterSpacing: 3, color: ea, fontWeight: 700, textTransform: "uppercase" },
+      title:     { fontFamily: "'Libre Baskerville', serif", fontSize: 22, fontWeight: 700, color: ecream, marginTop: 4 },
+      actions:   { display: "flex", gap: 8, flexWrap: "wrap" },
+      btn:       { padding: "8px 14px", fontSize: 12, fontWeight: 600, background: ecard, color: ecream, border: `1px solid ${eborder}`, borderRadius: 6, whiteSpace: "nowrap" },
+      nav:       { display: "flex", gap: 4, marginBottom: 16, overflowX: "auto", paddingBottom: 4 },
+      navBtn:    { padding: "10px 16px", fontSize: 12, fontWeight: 600, background: ecard, color: emuted, border: `1px solid ${eborder}`, borderRadius: 8, whiteSpace: "nowrap", flexShrink: 0 },
+      navBtnActive: { color: ecream, background: "#2e2a24", borderColor: ea },
+      panel:     { background: ecard, border: `1px solid ${eborder}`, borderRadius: 10, padding: "20px 18px", minHeight: 300 },
+      fields:    { display: "flex", flexDirection: "column", gap: 12 },
+      row:       { display: "flex", gap: 12, flexWrap: "wrap" },
+      half:      { flex: "1 1 200px", display: "flex", flexDirection: "column", gap: 4 },
+      third:     { flex: "1 1 120px", display: "flex", flexDirection: "column", gap: 4 },
+      label:     { fontSize: 11, fontWeight: 700, color: ea, textTransform: "uppercase", letterSpacing: 1.2, marginTop: 4 },
+      hint:      { fontSize: 12, color: emuted, lineHeight: 1.5, marginBottom: 4, fontStyle: "italic" },
+      input:     { width: "100%", padding: "10px 12px", background: einp, color: ecream, border: `1px solid ${eborder}`, borderRadius: 6, fontSize: 13, outline: "none" },
+      textarea:  { width: "100%", padding: "10px 12px", background: einp, color: ecream, border: `1px solid ${eborder}`, borderRadius: 6, fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5 },
+      select:    { padding: "10px 12px", background: einp, color: ecream, border: `1px solid ${eborder}`, borderRadius: 6, fontSize: 13, outline: "none" },
+      imageWrap: { marginBottom: 8 },
+      uploadBtn: { padding: "20px 24px", background: einp, color: emuted, border: `2px dashed ${eborder}`, borderRadius: 8, fontSize: 13, width: "100%" },
+      imgPreview: { maxWidth: "100%", maxHeight: 200, borderRadius: 8, border: `1px solid ${eborder}` },
+      imgRemove: { position: "absolute", top: 8, right: 8, padding: "4px 10px", background: "#000a", color: "#fff", border: "none", borderRadius: 4, fontSize: 12 },
+      listRow:   { display: "flex", gap: 8, alignItems: "flex-start" },
+      listNum:   { color: ea, fontWeight: 700, fontSize: 13, paddingTop: 10, minWidth: 20, textAlign: "center" },
+      removeBtn: { padding: "6px 10px", background: "#2a2420", color: "#f87171", border: "1px solid #f8717133", borderRadius: 4, fontSize: 12, flexShrink: 0 },
+      removeBtnSm: { padding: "2px 8px", background: "transparent", color: "#f87171", border: "none", fontSize: 13 },
+      addBtn:    { padding: "10px", background: "transparent", color: ea, border: `1px dashed ${ea}55`, borderRadius: 6, fontSize: 12, fontWeight: 600, width: "100%" },
+      addBtnSm:  { padding: "6px 12px", background: "transparent", color: ea, border: `1px dashed ${ea}44`, borderRadius: 4, fontSize: 11, fontWeight: 600 },
+      evTabs:    { display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 12 },
+      evTab:     { padding: "6px 12px", fontSize: 11, fontWeight: 600, background: einp, color: emuted, border: `1px solid ${eborder}`, borderRadius: 5 },
+      evTabActive: { color: ecream, borderColor: ea },
+      evTabAdd:  { padding: "6px 10px", fontSize: 13, fontWeight: 700, background: "transparent", color: ea, border: `1px dashed ${ea}44`, borderRadius: 5 },
+      evItem:    { padding: "12px", background: einp, border: `1px solid ${eborder}`, borderRadius: 6 },
+      check:     { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: ecream, cursor: "pointer" },
+      qCard:     { padding: "16px", background: einp, border: `1px solid ${eborder}`, borderRadius: 8, display: "flex", flexDirection: "column", gap: 8 },
+      qNum:      { fontSize: 14, fontWeight: 700, color: ea },
+      optBlock:  { padding: "12px", background: ebg, border: `1px solid ${eborder}`, borderRadius: 6, display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 },
+      optLetter: { fontSize: 13, fontWeight: 700, color: ea, minWidth: 20 },
+      followUp:  { marginTop: 8, padding: "12px", background: ecard, border: `1px solid ${ea}33`, borderRadius: 6, display: "flex", flexDirection: "column", gap: 6 },
+      empty:     { padding: "32px", textAlign: "center", color: emuted, fontSize: 13, fontStyle: "italic" },
+      verdictBtn: { padding: "14px 24px", fontSize: 14, fontWeight: 700, border: `2px solid ${eborder}`, borderRadius: 8, background: ecard, color: ecream, letterSpacing: 1 },
+      verdictActive: {
+        AUTHENTIC: { borderColor: "#2d6a4f", background: "#2d6a4f33", color: "#4ade80" },
+        FORGERY:   { borderColor: "#c0392b", background: "#c0392b33", color: "#f87171" },
+        STOLEN:    { borderColor: "#b45309", background: "#b4530933", color: "#fbbf24" },
+      },
+      footer:    { marginTop: 16, textAlign: "center" },
+      footerText: { fontSize: 11, color: emuted },
+    };
+
+    // ─── Game styles ──────────────────────────────────────────────────────────
+
+    const SG = {
+      // Full-screen two-column layout
+      page:        { fontFamily: "'Playfair Display', Georgia, serif", background: "#f2ead8", height: "100vh", color: "#1c1510", display: "flex", flexDirection: "column", overflow: "hidden" },
+      topBar:      { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", borderBottom: "1px solid #c8b898", flexShrink: 0, background: "#f2ead8", zIndex: 1 },
+      navBtn:      { padding: "5px 14px", fontSize: 12, fontFamily: "'Special Elite', monospace", letterSpacing: 1.5, background: "transparent", color: "#5a3e2b", border: "1px solid #c8b898", textTransform: "uppercase" },
+      fileRef:     { fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 3, color: "#a08878", textTransform: "uppercase" },
+      body:        { display: "flex", flex: 1, overflow: "hidden" },
+
+      // Left painting panel
+      leftPanel:   { width: 300, flexShrink: 0, borderRight: "1px solid #c8b898", display: "flex", flexDirection: "column", overflow: "hidden", background: "#1a1410" },
+      paintingArea: { flex: 1, overflow: "hidden", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", background: "#111" },
+      paintingImg: { width: "100%", height: "100%", objectFit: "cover", display: "block", cursor: "pointer" },
+      paintingEmoji: { fontSize: 110, lineHeight: 1, userSelect: "none" },
+      caseInfo:    { padding: "14px 16px 18px", borderTop: "1px solid #2e2820", flexShrink: 0 },
+      caseLabel:   { fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 3, color: "#5a4a38", textTransform: "uppercase", marginBottom: 6 },
+      caseTitle:   { fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: "#f2ead8", lineHeight: 1.2, marginBottom: 4 },
+      caseMeta:    { fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#8b7355", letterSpacing: 0.5, marginBottom: 2 },
+      caseMovement: { fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#5a4a38", marginBottom: 6 },
+      caseDesc:    { fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 13, color: "#9a8878", lineHeight: 1.5, marginTop: 8 },
+      statusStamp: { display: "inline-block", fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 2.5, color: "#8b1a1a", border: "1.5px solid #8b1a1a", padding: "3px 8px", textTransform: "uppercase", opacity: 0.75, transform: "rotate(1.5deg)" },
+
+      // Right investigation panel
+      rightPanel:  { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
+      tabBar:      { display: "flex", overflowX: "auto", borderBottom: "1px solid #c8b898", flexShrink: 0 },
+      tab:         { padding: "11px 18px", fontSize: 11, fontFamily: "'Special Elite', monospace", letterSpacing: 1.5, background: "transparent", color: "#a08878", border: "none", borderBottom: "2px solid transparent", whiteSpace: "nowrap", flexShrink: 0, textTransform: "uppercase", marginBottom: -1 },
+      tabActive:   { color: "#1c1510", borderBottom: "2px solid #8b1a1a" },
+      panel:       { flex: 1, overflowY: "auto", padding: "20px 28px" },
+
+      // Document typography
+      docTitle:    { fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 22, color: "#1c1510", marginBottom: 8 },
+      rule:        { height: 1, background: "#c8b898", marginBottom: 16 },
+      deponent:    { fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#6a5040", letterSpacing: 0.5, marginBottom: 16, textTransform: "uppercase" },
+      testimony:   { fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 17, color: "#2a1e14", lineHeight: 1.8, margin: "0 0 12px", padding: "0 0 0 16px", borderLeft: "2px solid #ddd0be" },
+      continueBtn: { marginTop: 8, padding: "7px 16px", fontSize: 12, fontFamily: "'Special Elite', monospace", letterSpacing: 1.5, background: "transparent", color: "#5a3e2b", border: "1px solid #c8b898", textTransform: "uppercase" },
+      endMark:     { fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#a08878", letterSpacing: 2, textAlign: "center", marginTop: 18, paddingTop: 14, borderTop: "1px dashed #c8b898" },
+      dim:         { fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#a08878", letterSpacing: 0.5, fontStyle: "italic", margin: "10px 0 0" },
+
+      // Evidence
+      evItem:      { display: "flex", gap: 12, padding: "11px 0", borderBottom: "1px solid #e8e0ce", alignItems: "flex-start", position: "relative" },
+      evFlagged:   { background: "#fdf0f0", padding: "11px 10px", margin: "0 -10px", borderBottom: "1px solid #e8b8b8", borderLeft: "3px solid #8b1a1a" },
+      evPlayerFlagged: { background: "#fffbf0", padding: "11px 10px", margin: "0 -10px", borderLeft: "3px solid #c8a040" },
+      evWrongFlag:     { background: "#fff5f5", padding: "11px 10px", margin: "0 -10px", borderBottom: "1px solid #e8b8b8", borderLeft: "3px solid #cc3a3a" },
+      evNum:       { fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#a08878", flexShrink: 0, paddingTop: 2, minWidth: 20 },
+      evText:      { fontFamily: "'Playfair Display', serif", fontSize: 15, color: "#2a1e14", lineHeight: 1.65 },
+      evFlag:      { fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#8b1a1a", letterSpacing: 1, marginTop: 5, textTransform: "uppercase" },
+      evFlagBtn:   { flexShrink: 0, padding: "4px 8px", fontSize: 14, background: "transparent", color: "#c8b898", border: "1px solid #e8e0ce", lineHeight: 1, alignSelf: "flex-start", marginTop: 1 },
+      evFlagBtnActive: { color: "#c8a040", border: "1px solid #c8a040", background: "#fffbf0" },
+      coinPop:     { position: "absolute", right: 36, top: 0, fontFamily: "'Special Elite', monospace", fontSize: 13, color: "#b08a20", letterSpacing: 1, pointerEvents: "none", zIndex: 10 },
+
+      // Interrogation
+      qBlock:      { padding: "13px 0", borderBottom: "1px solid #e8e0ce" },
+      qLocked:     { padding: "11px 0", borderBottom: "1px solid #e8e0ce", fontFamily: "'Playfair Display', serif", fontSize: 15, color: "#a08878" },
+      qLockNote:   { fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#c8b898", letterSpacing: 0.5, display: "block", marginTop: 3 },
+      qTopic:      { fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 16, color: "#5a3e2b", marginBottom: 9 },
+      askBtn:      { padding: "6px 14px", fontSize: 11, fontFamily: "'Special Elite', monospace", letterSpacing: 1.5, background: "transparent", color: "#8b1a1a", border: "1px solid #c8b898", textTransform: "uppercase" },
+      optHint:     { fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#a08878", letterSpacing: 1, marginBottom: 6, textTransform: "uppercase" },
+      optBtn:      { padding: "8px 14px", fontSize: 15, fontFamily: "'Playfair Display', serif", background: "transparent", color: "#2a1e14", border: "1px solid #c8b898", textAlign: "left", lineHeight: 1.45 },
+      optLetter:   { fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#8b1a1a", marginRight: 7 },
+      optText:     { fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 15, color: "#2a1e14" },
+      cancelBtn:   { padding: "3px 0", fontSize: 11, fontFamily: "'Special Elite', monospace", letterSpacing: 1, background: "transparent", color: "#a08878", border: "none", textAlign: "left", textTransform: "uppercase", marginTop: 2 },
+      exchange:    { borderLeft: "2px solid #ddd0be", paddingLeft: 12, display: "flex", flexDirection: "column", gap: 10, marginTop: 4 },
+      youLine:     { display: "flex", gap: 9, alignItems: "flex-start" },
+      youTag:      { fontFamily: "'Special Elite', monospace", fontSize: 10, color: "#8b1a1a", letterSpacing: 2, textTransform: "uppercase", flexShrink: 0, paddingTop: 3, minWidth: 36 },
+      youSaid:     { fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 15, color: "#2a1e14", lineHeight: 1.6 },
+      themLine:    { display: "flex", gap: 9, alignItems: "flex-start" },
+      themTag:     { fontFamily: "'Special Elite', monospace", fontSize: 10, color: "#a08878", letterSpacing: 2, textTransform: "uppercase", flexShrink: 0, paddingTop: 3, minWidth: 36 },
+      themSaid:    { fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 15, color: "#5a3e2b", lineHeight: 1.6 },
+      fuWrap:      { marginTop: 4, paddingTop: 10, borderTop: "1px dashed #ddd0be", display: "flex", flexDirection: "column", gap: 7 },
+      fuPrompt:    { fontFamily: "'Playfair Display', serif", fontSize: 14, fontStyle: "italic", color: "#8b1a1a", marginBottom: 5 },
+
+      // Verdict bar
+      verdictBar:  { flexShrink: 0, padding: "12px 28px 14px", borderTop: "1px solid #c8b898", background: "#faf5ec" },
+      verdictLabel: { fontFamily: "'Special Elite', monospace", fontSize: 11, letterSpacing: 3, color: "#a08878", textTransform: "uppercase", marginBottom: 8 },
+      verdictRow:  { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+      verdictBtn:  { padding: "10px 20px", fontSize: 12, fontFamily: "'Special Elite', monospace", letterSpacing: 2, background: "transparent", color: "#a08878", border: "1.5px solid #c8b898", textTransform: "uppercase" },
+      verdictSel:  {
+        AUTHENTIC: { color: "#2a6a3a", borderColor: "#2a6a3a", background: "#f0faf2" },
+        FORGERY:   { color: "#8b1a1a", borderColor: "#8b1a1a", background: "#fdf0f0" },
+        STOLEN:    { color: "#7a5500", borderColor: "#c4973a", background: "#fdf8ec" },
+      },
+      submitBtn:   { marginLeft: "auto", padding: "10px 22px", fontSize: 12, fontFamily: "'Special Elite', monospace", letterSpacing: 2, background: "#1c1510", color: "#f2ead8", border: "none", textTransform: "uppercase" },
+
+      // Result / reward bar
+      resultBar:   { flexShrink: 0, padding: "16px 28px 18px", borderTop: "1px solid #c8b898", background: "#faf5ec", overflowY: "auto", maxHeight: "46vh" },
+      rewardWrap:  { display: "flex", alignItems: "center", gap: 16, marginBottom: 14 },
+      badgeSeal:   { width: 62, height: 62, borderRadius: "50%", border: "2.5px solid", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+      rewardTitle: { fontFamily: "'Playfair Display', serif", fontSize: 24, fontWeight: 700, marginBottom: 3 },
+      rewardSub:   { fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#6a5040", letterSpacing: 0.5 },
+      incorrectWrap: { marginBottom: 12 },
+      incorrectTitle: { fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: "#8b1a1a", marginBottom: 4 },
+      incorrectSub: { fontFamily: "'Special Elite', monospace", fontSize: 13, color: "#a08878", letterSpacing: 0.5 },
+      resultNotes: { borderTop: "1px solid #e8e0ce", paddingTop: 12, marginBottom: 12 },
+      resultExplLabel: { fontFamily: "'Special Elite', monospace", fontSize: 11, letterSpacing: 3, color: "#a08878", textTransform: "uppercase", marginBottom: 8 },
+      resultExplText: { fontFamily: "'Playfair Display', serif", fontSize: 15, color: "#2a1e14", lineHeight: 1.7, margin: 0 },
+      retryBtn:    { padding: "7px 18px", fontSize: 11, fontFamily: "'Special Elite', monospace", letterSpacing: 1.5, background: "transparent", color: "#a08878", border: "1px solid #c8b898", textTransform: "uppercase" },
+    };
+
+    // ─── Painters Reference Book ─────────────────────────────────────────────
+
+    function PaintersBook({ onClose }) {
+      const [selectedId, setSelectedId] = useState(PAINTERS_BOOK[0].id);
+      const painter = PAINTERS_BOOK.find(p => p.id === selectedId);
+
+      const cursive = "'Pinyon Script', cursive";
+      const serif   = "'Playfair Display', Georgia, serif";
+      const mono    = "'Special Elite', monospace";
+
+      const Section = ({ title, children }) => (
+        <div style={{ marginBottom: 22 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: 3, color: "#8b6a40", textTransform: "uppercase" }}>{title}</span>
+            <div style={{ flex: 1, height: 1, background: "linear-gradient(to right, #c8a870, transparent)" }} />
+          </div>
+          {children}
+        </div>
+      );
+
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(10,7,3,0.92)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 20px" }} onClick={onClose}>
+          <div style={{ display: "flex", width: "100%", maxWidth: 960, height: "88vh", boxShadow: "0 40px 100px rgba(0,0,0,0.7), 0 0 0 1px #7a5a30", borderRadius: 2 }} onClick={e => e.stopPropagation()}>
+
+            {/* ── Left page — index ── */}
+            <div style={{ width: 230, background: "#f0e6cc", borderRight: "none", display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden", borderRadius: "2px 0 0 2px" }}>
+              {/* decorative top band */}
+              <div style={{ background: "#3a2510", padding: "22px 20px 18px" }}>
+                <div style={{ fontFamily: cursive, fontSize: 30, color: "#d4a85a", lineHeight: 1.1, marginBottom: 6 }}>The Connoisseur's Handbook</div>
+                <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: 2, color: "#8b7355", textTransform: "uppercase" }}>A Reference of Masters</div>
+              </div>
+
+              {/* ornament */}
+              <div style={{ textAlign: "center", padding: "10px 0 6px", color: "#c8a870", fontSize: 14, letterSpacing: 4, background: "#f0e6cc" }}>❧</div>
+              <div style={{ height: 1, background: "#c8a870", margin: "0 20px" }} />
+
+              {/* painter list */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "12px 0" }}>
+                {PAINTERS_BOOK.map((p, i) => (
+                  <button key={p.id} onClick={() => setSelectedId(p.id)} style={{
+                    display: "block", width: "100%", textAlign: "left",
+                    padding: "11px 20px", border: "none",
+                    background: selectedId === p.id ? "#e8d9b8" : "transparent",
+                    borderLeft: selectedId === p.id ? "3px solid #8b6a40" : "3px solid transparent",
+                  }}>
+                    <div style={{ fontFamily: cursive, fontSize: 20, color: selectedId === p.id ? "#3a2510" : "#6a4a2a", lineHeight: 1.1 }}>{p.name}</div>
+                    <div style={{ fontFamily: mono, fontSize: 9, color: "#a08060", letterSpacing: 1, marginTop: 2 }}>{p.years} · {p.nationality}</div>
+                  </button>
+                ))}
+                <div style={{ padding: "10px 20px", fontFamily: serif, fontStyle: "italic", fontSize: 11, color: "#c0a880" }}>
+                  More entries to be added…
+                </div>
+              </div>
+
+              {/* close */}
+              <div style={{ borderTop: "1px solid #c8a870", padding: "14px 20px" }}>
+                <button onClick={onClose} style={{ width: "100%", padding: "9px", fontFamily: mono, fontSize: 10, letterSpacing: 2, background: "#3a2510", color: "#d4a85a", border: "none", textTransform: "uppercase" }}>
+                  Close Book
+                </button>
+              </div>
+            </div>
+
+            {/* ── Spine ── */}
+            <div style={{ width: 12, flexShrink: 0, background: "linear-gradient(to right, #5a3a18, #8b6a40 40%, #6a4a28 60%, #3a2510)", boxShadow: "inset -3px 0 8px rgba(0,0,0,0.3), inset 3px 0 6px rgba(255,220,140,0.08)" }} />
+
+            {/* ── Right page — profile ── */}
+            <div style={{ flex: 1, background: "#faf5e8", overflowY: "auto", padding: "36px 40px 40px", borderRadius: "0 2px 2px 0" }}>
+
+              {/* Header */}
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ fontFamily: cursive, fontSize: 52, color: "#2a1a08", lineHeight: 1, marginBottom: 4 }}>{painter.name}</div>
+                <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+                  <span style={{ fontFamily: mono, fontSize: 11, color: "#8b6a40", letterSpacing: 1 }}>{painter.years}</span>
+                  <span style={{ color: "#c8a870" }}>·</span>
+                  <span style={{ fontFamily: mono, fontSize: 11, color: "#8b6a40", letterSpacing: 1 }}>{painter.nationality}</span>
+                  <span style={{ color: "#c8a870" }}>·</span>
+                  <span style={{ fontFamily: serif, fontStyle: "italic", fontSize: 12, color: "#8b6a40" }}>{painter.movement}</span>
+                </div>
+              </div>
+
+              {/* Ornamental rule */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0 24px" }}>
+                <div style={{ flex: 1, height: 1, background: "#c8a870" }} />
+                <span style={{ color: "#c8a870", fontSize: 16 }}>◆</span>
+                <div style={{ flex: 1, height: 1, background: "#c8a870" }} />
+              </div>
+
+              {/* Portrait + Vitals row */}
+              <div style={{ display: "flex", gap: 28, marginBottom: 26 }}>
+                {/* Portrait frame */}
+                <div style={{ flexShrink: 0 }}>
+                  <div style={{ width: 148, height: 188, border: "1px solid #b09060", outline: "4px solid #f0e6cc", outlineOffset: "-8px", background: "#ede3cc", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    {painter.portrait
+                      ? <img src={painter.portrait} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      : <>
+                          <div style={{ fontSize: 28, opacity: 0.3 }}>🎨</div>
+                          <div style={{ fontFamily: mono, fontSize: 8, color: "#b09060", letterSpacing: 1, textAlign: "center", textTransform: "uppercase", lineHeight: 1.5 }}>Portrait<br/>to be added</div>
+                        </>
+                    }
+                  </div>
+                  {/* Signature frame */}
+                  <div style={{ marginTop: 10, width: 148, height: 56, border: "1px solid #b09060", background: "#ede3cc", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 }}>
+                    {painter.signatureRef
+                      ? <img src={painter.signatureRef} style={{ maxWidth: "90%", maxHeight: "80%", objectFit: "contain" }} />
+                      : <>
+                          <div style={{ fontFamily: cursive, fontSize: 15, color: "#b09060" }}>{painter.name.split(" ").slice(-1)[0]}</div>
+                          <div style={{ fontFamily: mono, fontSize: 7, color: "#c0a880", letterSpacing: 1, textTransform: "uppercase" }}>Signature ref. pending</div>
+                        </>
+                    }
+                  </div>
+                </div>
+
+                {/* Vitals table */}
+                <div style={{ flex: 1 }}>
+                  <Section title="Vital Statistics">
+                    {[
+                      ["Born",      painter.born],
+                      ["Died",      painter.died],
+                      ["Movement",  painter.movement],
+                      ["Subjects",  painter.subjects],
+                    ].map(([label, val]) => (
+                      <div key={label} style={{ display: "flex", gap: 10, marginBottom: 7, alignItems: "flex-start" }}>
+                        <div style={{ fontFamily: mono, fontSize: 9, color: "#8b6a40", letterSpacing: 1, textTransform: "uppercase", minWidth: 62, paddingTop: 2, flexShrink: 0 }}>{label}</div>
+                        <div style={{ fontFamily: serif, fontSize: 13, color: "#2a1a08", lineHeight: 1.5 }}>{val}</div>
+                      </div>
+                    ))}
+                  </Section>
+                </div>
+              </div>
+
+              {/* Style & Technique */}
+              <Section title="Style & Technique">
+                <p style={{ fontFamily: serif, fontStyle: "italic", fontSize: 14, color: "#2a1a08", lineHeight: 1.75, margin: 0, paddingLeft: 14, borderLeft: "2px solid #d4b880" }}>{painter.technique}</p>
+              </Section>
+
+              {/* Palette */}
+              <Section title="Characteristic Palette">
+                <p style={{ fontFamily: serif, fontSize: 13, color: "#2a1a08", lineHeight: 1.65, margin: 0 }}>{painter.palette}</p>
+              </Section>
+
+              {/* Signature */}
+              <Section title="Signature Notes">
+                <p style={{ fontFamily: serif, fontStyle: "italic", fontSize: 13, color: "#2a1a08", lineHeight: 1.65, margin: 0 }}>{painter.signature}</p>
+              </Section>
+
+              {/* Known Works */}
+              <Section title={`Known Works (${painter.authenticWorks.toLocaleString()} authenticated)`}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 0" }}>
+                  {painter.knownWorks.map((w, i) => (
+                    <span key={i} style={{ fontFamily: serif, fontStyle: "italic", fontSize: 13, color: "#3a2510" }}>
+                      {w}{i < painter.knownWorks.length - 1 ? <span style={{ color: "#c8a870", margin: "0 8px" }}>·</span> : ""}
+                    </span>
+                  ))}
+                </div>
+              </Section>
+
+              {/* Authentication Notes */}
+              <div style={{ background: "#fdf0e8", border: "1px solid #d4905a", padding: "16px 18px", marginTop: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: 3, color: "#8b4a20", textTransform: "uppercase" }}>Authentication Red Flags</span>
+                  <div style={{ flex: 1, height: 1, background: "#d4905a" }} />
+                </div>
+                {painter.redFlags.map((flag, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, marginBottom: i < painter.redFlags.length - 1 ? 8 : 0 }}>
+                    <span style={{ color: "#8b4a20", fontSize: 12, flexShrink: 0, paddingTop: 1 }}>!</span>
+                    <span style={{ fontFamily: serif, fontSize: 13, color: "#3a1a08", lineHeight: 1.55 }}>{flag}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Footer ornament */}
+              <div style={{ textAlign: "center", margin: "28px 0 0", fontFamily: cursive, fontSize: 18, color: "#c8a870", letterSpacing: 6 }}>❧ ❧ ❧</div>
+
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── HomeScreen ───────────────────────────────────────────────────────────
+
+    function HomeScreen({ cases, solvedCases, coins, unlockedItems, onUnlock, onPlay, onEdit, onNew }) {
+      const clueCount = c => Object.values(c.evidence).reduce((n, t) => n + t.items.filter(x => x.text).length, 0);
+      const solved  = solvedCases   || new Set();
+      const unlocked = unlockedItems || new Set();
+      const [showBook, setShowBook]   = useState(false);
+      const [showShop, setShowShop]   = useState(false);
+      const bookOwned = unlocked.has("book");
+      return (
+        <div style={{ fontFamily: "'Playfair Display', Georgia, serif", background: "#f2ead8", minHeight: "100vh", color: "#1c1510" }}>
+          <style>{gameCSS}</style>
+          {showBook && bookOwned && <PaintersBook onClose={() => setShowBook(false)} />}
+          {showShop && <Shop coins={coins || 0} unlockedItems={unlocked} onUnlock={(id, cost) => { onUnlock && onUnlock(id, cost); }} onClose={() => setShowShop(false)} />}
+
+          {/* Masthead */}
+          <div style={{ background: "#1c1510", color: "#f2ead8", padding: "36px 36px 30px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20 }}>
+              <div>
+                <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 4, color: "#8b7355", textTransform: "uppercase", marginBottom: 12 }}>Art Authentication Bureau</div>
+                <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: 48, fontWeight: 700, margin: "0 0 10px", lineHeight: 1.05 }}>The Case Files</h1>
+                <p style={{ fontFamily: "'Special Elite', monospace", fontSize: 14, color: "#a08878", margin: 0, letterSpacing: 1 }}>Authenticate. Question. Decide.</p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end", flexShrink: 0, marginTop: 6 }}>
+                {/* Coin balance */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "#2a1e10", border: "1px solid #5a3e2b" }}>
+                  <span style={{ fontSize: 18 }}>🪙</span>
+                  <span style={{ fontFamily: "'Special Elite', monospace", fontSize: 16, color: "#d4a85a", letterSpacing: 1 }}>{(coins || 0).toLocaleString()}</span>
+                  <button onClick={() => setShowShop(true)} style={{ padding: "4px 10px", fontFamily: "'Special Elite', monospace", fontSize: 9, letterSpacing: 1.5, background: "transparent", color: "#8b6a40", border: "1px solid #5a3e2b", textTransform: "uppercase" }}>Shop</button>
+                </div>
+                {/* Book button */}
+                <button
+                  onClick={() => bookOwned ? setShowBook(true) : setShowShop(true)}
+                  style={{ padding: "10px 18px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 1.5, background: bookOwned ? "#3a2510" : "#1e1810", color: bookOwned ? "#d4a85a" : "#5a4a38", border: `1px solid ${bookOwned ? "#8b6a40" : "#3a2a1a"}`, textTransform: "uppercase" }}
+                  title={bookOwned ? "Open reference book" : "Purchase in shop (300 🪙)"}
+                >
+                  {bookOwned ? "📖 Painters Reference" : "🔒 Painters Reference"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Cases */}
+          <div style={{ padding: "32px 36px" }}>
+            <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, letterSpacing: 3, color: "#a08878", textTransform: "uppercase", marginBottom: 20 }}>
+              {cases.length} {cases.length === 1 ? "case" : "cases"} on file · {solved.size} solved
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 16, marginBottom: 32 }}>
+              {cases.map((c, i) => {
+                const isSolved = solved.has(c.id);
+                return (
+                  <div key={i} style={{ position: "relative", background: "#faf5ec", border: isSolved ? "1px solid #2a6a3a" : "1px solid #c8b898", display: "flex", flexDirection: "column" }}>
+                    {isSolved && (
+                      <div style={{
+                        position: "absolute", top: 14, right: -10,
+                        fontFamily: "'Special Elite', monospace", fontSize: 9, letterSpacing: 2,
+                        color: "#fff", background: "#2a6a3a", padding: "4px 14px",
+                        textTransform: "uppercase", transform: "rotate(2deg)",
+                        boxShadow: "0 2px 6px rgba(0,0,0,0.25)", zIndex: 2,
+                      }}>
+                        ✓ Solved
+                      </div>
+                    )}
+                    <div style={{ padding: "20px 20px 12px", flex: 1 }}>
+                      <div style={{ fontSize: 38, marginBottom: 10, lineHeight: 1 }}>{c.painting.emoji || "🖼️"}</div>
+                      <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 17, fontWeight: 700, color: "#1c1510", marginBottom: 4, lineHeight: 1.3 }}>{c.painting.title || "Untitled"}</div>
+                      <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#8b7355", marginBottom: 2, letterSpacing: 0.5 }}>
+                        {c.painting.artist || "Unknown"}{c.painting.year_claimed ? ` · ${c.painting.year_claimed}` : ""}
+                      </div>
+                      {c.painting.movement && <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#a08878" }}>{c.painting.movement}</div>}
+                      {c.seller.dialogue[0] && (
+                        <p style={{ fontFamily: "'Playfair Display', serif", fontStyle: "italic", fontSize: 14, color: "#6a5040", lineHeight: 1.55, margin: "12px 0 0" }}>
+                          &#8220;{c.seller.dialogue[0].slice(0, 90)}{c.seller.dialogue[0].length > 90 ? "…" : ""}&#8221;
+                        </p>
+                      )}
+                    </div>
+                    <div style={{ padding: "6px 20px 10px", fontFamily: "'Special Elite', monospace", fontSize: 11, color: "#a08878", borderTop: "1px solid #e8e0ce" }}>
+                      {clueCount(c)} clues · {c.questions.length} questions
+                    </div>
+                    <div style={{ display: "flex", borderTop: "1px solid #e8e0ce" }}>
+                      <button style={{ flex: 1, padding: "13px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 2, background: isSolved ? "#2a6a3a" : "#1c1510", color: "#f2ead8", border: "none", textTransform: "uppercase" }} onClick={() => onPlay(i)}>
+                        {isSolved ? "Review →" : "Investigate →"}
+                      </button>
+                      <button style={{ padding: "13px 20px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 1, background: "transparent", color: "#5a3e2b", border: "none", borderLeft: "1px solid #e8e0ce", textTransform: "uppercase" }} onClick={() => onEdit(i)}>
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ textAlign: "center", paddingTop: 16, borderTop: "1px solid #c8b898" }}>
+              <button style={{ padding: "12px 30px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 2, background: "transparent", color: "#5a3e2b", border: "1px solid #c8b898", textTransform: "uppercase" }} onClick={onNew}>
+                + Create New Case
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── App (root) ───────────────────────────────────────────────────────────
+
+    function App() {
+      const [screen, setScreen]       = useState("home");
+      const [activeIdx, setActiveIdx] = useState(null);
+
+      // Firebase-backed state
+      const [uid, setUid]               = useState(null);
+      const [cases, setCases]           = useState(null);       // null = loading
+      const [coins, setCoins]           = useState(0);
+      const [unlockedItems, setUnlocked] = useState(new Set());
+      const [solvedCases, setSolved]    = useState(new Set()); // Set of case IDs
+
+      // ── Anonymous sign-in ──────────────────────────────────────────────────
+      useEffect(() => {
+        const unsub = auth.onAuthStateChanged(user => {
+          if (user) { setUid(user.uid); return; }
+          auth.signInAnonymously().catch(console.error);
+        });
+        return unsub;
+      }, []);
+
+      // ── Sync player data ───────────────────────────────────────────────────
+      useEffect(() => {
+        if (!uid) return;
+        const unsub = db.collection("players").doc(uid).onSnapshot(doc => {
+          const d = doc.data() || {};
+          setCoins(d.coins ?? 0);
+          setUnlocked(new Set(d.unlockedItems || []));
+          setSolved(new Set(d.solvedCaseIds || []));
+        });
+        return unsub;
+      }, [uid]);
+
+      // ── Load / seed cases ──────────────────────────────────────────────────
+      useEffect(() => {
+        const unsub = db.collection("cases").onSnapshot(snap => {
+          if (snap.empty) {
+            // First run — write the preloaded cases to Firestore
+            const batch = db.batch();
+            PRELOADED_CASES.forEach(c =>
+              batch.set(db.collection("cases").doc(String(c.id)), c)
+            );
+            batch.commit().catch(console.error);
+            setCases(PRELOADED_CASES.map(deepClone));
+          } else {
+            setCases(
+              snap.docs.map(d => d.data()).sort((a, b) => (a.id || 0) - (b.id || 0))
+            );
+          }
+        });
+        return unsub;
+      }, []);
+
+      // ── Helpers ────────────────────────────────────────────────────────────
+      const goHome   = () => setScreen("home");
+      const play     = i  => { setActiveIdx(i);    setScreen("play"); };
+      const edit     = i  => { setActiveIdx(i);    setScreen("edit"); };
+      const newCase  = () => { setActiveIdx(null); setScreen("edit"); };
+
+      const solveCase = () => {
+        if (!uid || !cases) return;
+        const caseId = cases[activeIdx]?.id;
+        if (!caseId) return;
+        db.collection("players").doc(uid).set(
+          { solvedCaseIds: firebase.firestore.FieldValue.arrayUnion(caseId) },
+          { merge: true }
+        );
+        setSolved(prev => new Set([...prev, caseId]));
+      };
+
+      const addCoins = amount => {
+        if (!uid) return;
+        const next = Math.max(0, coins + amount);
+        db.collection("players").doc(uid).set({ coins: next }, { merge: true });
+        setCoins(next);
+      };
+
+      const unlockItem = (id, cost) => {
+        if (!uid || unlockedItems.has(id) || coins < cost) return;
+        const next  = coins - cost;
+        const items = [...unlockedItems, id];
+        db.collection("players").doc(uid).set({ coins: next, unlockedItems: items }, { merge: true });
+        setCoins(next);
+        setUnlocked(new Set(items));
+      };
+
+      const saveCase = updated => {
+        const id     = updated.id || Date.now();
+        const withId = { ...updated, id };
+        db.collection("cases").doc(String(id)).set(withId);
+        // onSnapshot will refresh cases automatically
+        setScreen("home");
+      };
+
+      // ── Loading screen ─────────────────────────────────────────────────────
+      if (cases === null) return (
+        <div style={{ background: "#1a1410", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20 }}>
+          <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 22, color: "#8b7355", letterSpacing: 1 }}>Art Authentication Bureau</div>
+          <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#5a4a38", letterSpacing: 3, textTransform: "uppercase" }}>Loading case files…</div>
+        </div>
+      );
+
+      if (screen === "play") return <GameView c={cases[activeIdx]} onBack={goHome} onSolve={solveCase} onAward={addCoins} coins={coins} unlockedItems={unlockedItems} />;
+      if (screen === "edit") return <CaseEditor initialCase={activeIdx !== null ? cases[activeIdx] : null} onSave={saveCase} onCancel={goHome} />;
+      return <HomeScreen cases={cases} solvedCases={solvedCases} coins={coins} unlockedItems={unlockedItems} onUnlock={unlockItem} onPlay={play} onEdit={edit} onNew={newCase} />;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
