@@ -11,6 +11,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #1a1814; }
@@ -35,6 +36,7 @@
     firebase.initializeApp(firebaseConfig);
     const db             = firebase.firestore();
     const auth           = firebase.auth();
+    const storage        = firebase.storage();
     const googleProvider = new firebase.auth.GoogleAuthProvider();
 
     // Only this email gets editor access
@@ -391,6 +393,7 @@
       const [toast, setToast]     = useState(null);
       const fileRef   = useRef(null);
       const importRef = useRef(null);
+      const [uploading, setUploading] = useState(false);
 
       const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
@@ -398,11 +401,22 @@
         setC(prev => { const next = deepClone(prev); fn(next); return next; });
       }, []);
 
-      const handleImage = e => {
+      const handleImage = async e => {
         const file = e.target.files?.[0]; if (!file) return;
-        const reader = new FileReader();
-        reader.onload = ev => update(d => { d.painting.image = ev.target.result; });
-        reader.readAsDataURL(file);
+        setUploading(true);
+        try {
+          const path = `paintings/${c.id || Date.now()}_${file.name}`;
+          const ref  = storage.ref(path);
+          await ref.put(file);
+          const url  = await ref.getDownloadURL();
+          update(d => { d.painting.image = url; });
+        } catch (err) {
+          showToast("Upload failed — check Storage rules");
+          console.error(err);
+        } finally {
+          setUploading(false);
+          e.target.value = "";
+        }
       };
 
       const exportJSON = () => {
@@ -511,10 +525,12 @@
                   {c.painting.image ? (
                     <div style={{ position: "relative", display: "inline-block" }}>
                       <img src={c.painting.image} alt="" style={SE.imgPreview} />
-                      <button style={SE.imgRemove} onClick={() => update(d => { d.painting.image = null; })}>✕ Remove</button>
+                      <button style={SE.imgRemove} onClick={() => update(d => { d.painting.image = null; })}>Remove</button>
                     </div>
+                  ) : uploading ? (
+                    <div style={{ ...SE.uploadBtn, opacity: 0.6, cursor: "default" }}>Uploading...</div>
                   ) : (
-                    <button style={SE.uploadBtn} onClick={() => fileRef.current?.click()}>📷 Upload Image</button>
+                    <button style={SE.uploadBtn} onClick={() => fileRef.current?.click()}>Upload Image</button>
                   )}
                   <input ref={fileRef} type="file" accept="image/*" onChange={handleImage} style={{ display: "none" }} />
                 </div>
