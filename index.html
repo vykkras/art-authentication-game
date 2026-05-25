@@ -25,16 +25,20 @@
     // ─── Firebase ─────────────────────────────────────────────────────────────
     // Paste your Firebase project config here (Firebase Console → Project Settings → Your apps)
     const firebaseConfig = {
-      apiKey:            "YOUR_API_KEY",
-      authDomain:        "YOUR_PROJECT.firebaseapp.com",
-      projectId:         "YOUR_PROJECT_ID",
-      storageBucket:     "YOUR_PROJECT.appspot.com",
-      messagingSenderId: "YOUR_SENDER_ID",
-      appId:             "YOUR_APP_ID",
+      apiKey:            "AIzaSyBFqU-lXnAMTcZzihCgNnuT9PPTf4M3cFU",
+      authDomain:        "art-authentication-game.firebaseapp.com",
+      projectId:         "art-authentication-game",
+      storageBucket:     "art-authentication-game.firebasestorage.app",
+      messagingSenderId: "452840761491",
+      appId:             "1:452840761491:web:f8ab9ccdc173a571940566",
     };
     firebase.initializeApp(firebaseConfig);
-    const db   = firebase.firestore();
-    const auth = firebase.auth();
+    const db             = firebase.firestore();
+    const auth           = firebase.auth();
+    const googleProvider = new firebase.auth.GoogleAuthProvider();
+
+    // Only this email gets editor access
+    const ADMIN_EMAIL = "vmkrasovsky@yahoo.com";
 
     // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -1677,7 +1681,7 @@
 
     // ─── HomeScreen ───────────────────────────────────────────────────────────
 
-    function HomeScreen({ cases, solvedCases, coins, unlockedItems, onUnlock, onPlay, onEdit, onNew }) {
+    function HomeScreen({ cases, solvedCases, coins, unlockedItems, onUnlock, onPlay, onEdit, onNew, isAdmin, onSignIn, onSignOut }) {
       const clueCount = c => Object.values(c.evidence).reduce((n, t) => n + t.items.filter(x => x.text).length, 0);
       const solved  = solvedCases   || new Set();
       const unlocked = unlockedItems || new Set();
@@ -1758,18 +1762,33 @@
                       <button style={{ flex: 1, padding: "13px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 2, background: isSolved ? "#2a6a3a" : "#1c1510", color: "#f2ead8", border: "none", textTransform: "uppercase" }} onClick={() => onPlay(i)}>
                         {isSolved ? "Review →" : "Investigate →"}
                       </button>
-                      <button style={{ padding: "13px 20px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 1, background: "transparent", color: "#5a3e2b", border: "none", borderLeft: "1px solid #e8e0ce", textTransform: "uppercase" }} onClick={() => onEdit(i)}>
-                        Edit
-                      </button>
+                      {onEdit && (
+                        <button style={{ padding: "13px 20px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 1, background: "transparent", color: "#5a3e2b", border: "none", borderLeft: "1px solid #e8e0ce", textTransform: "uppercase" }} onClick={() => onEdit(i)}>
+                          Edit
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
-            <div style={{ textAlign: "center", paddingTop: 16, borderTop: "1px solid #c8b898" }}>
-              <button style={{ padding: "12px 30px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 2, background: "transparent", color: "#5a3e2b", border: "1px solid #c8b898", textTransform: "uppercase" }} onClick={onNew}>
-                + Create New Case
-              </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 16, borderTop: "1px solid #c8b898" }}>
+              {onNew ? (
+                <button style={{ padding: "12px 30px", fontFamily: "'Special Elite', monospace", fontSize: 12, letterSpacing: 2, background: "transparent", color: "#5a3e2b", border: "1px solid #c8b898", textTransform: "uppercase" }} onClick={onNew}>
+                  + Create New Case
+                </button>
+              ) : <span />}
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {isAdmin ? (
+                  <button onClick={onSignOut} style={{ padding: "6px 14px", fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 1, background: "transparent", color: "#8b7355", border: "1px solid #c8b898", textTransform: "uppercase" }}>
+                    ◆ Admin — Sign out
+                  </button>
+                ) : (
+                  <button onClick={onSignIn} style={{ padding: "6px 14px", fontFamily: "'Special Elite', monospace", fontSize: 10, letterSpacing: 1, background: "transparent", color: "#c8b898", border: "1px solid #e8e0ce", textTransform: "uppercase", opacity: 0.4 }}>
+                    ◆ Admin
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1784,19 +1803,30 @@
 
       // Firebase-backed state
       const [uid, setUid]               = useState(null);
+      const [isAdmin, setIsAdmin]       = useState(false);
       const [cases, setCases]           = useState(null);       // null = loading
       const [coins, setCoins]           = useState(0);
       const [unlockedItems, setUnlocked] = useState(new Set());
       const [solvedCases, setSolved]    = useState(new Set()); // Set of case IDs
 
-      // ── Anonymous sign-in ──────────────────────────────────────────────────
+      // ── Auth (anonymous for players, Google for admin) ─────────────────────
       useEffect(() => {
         const unsub = auth.onAuthStateChanged(user => {
-          if (user) { setUid(user.uid); return; }
-          auth.signInAnonymously().catch(console.error);
+          if (user) {
+            setUid(user.uid);
+            setIsAdmin(user.email === ADMIN_EMAIL);
+          } else {
+            auth.signInAnonymously().catch(console.error);
+          }
         });
         return unsub;
       }, []);
+
+      const signInAdmin = () =>
+        auth.signInWithPopup(googleProvider).catch(console.error);
+
+      const signOutAdmin = () =>
+        auth.signOut().then(() => auth.signInAnonymously()).catch(console.error);
 
       // ── Sync player data ───────────────────────────────────────────────────
       useEffect(() => {
@@ -1880,8 +1910,8 @@
       );
 
       if (screen === "play") return <GameView c={cases[activeIdx]} onBack={goHome} onSolve={solveCase} onAward={addCoins} coins={coins} unlockedItems={unlockedItems} />;
-      if (screen === "edit") return <CaseEditor initialCase={activeIdx !== null ? cases[activeIdx] : null} onSave={saveCase} onCancel={goHome} />;
-      return <HomeScreen cases={cases} solvedCases={solvedCases} coins={coins} unlockedItems={unlockedItems} onUnlock={unlockItem} onPlay={play} onEdit={edit} onNew={newCase} />;
+      if (screen === "edit" && isAdmin) return <CaseEditor initialCase={activeIdx !== null ? cases[activeIdx] : null} onSave={saveCase} onCancel={goHome} />;
+      return <HomeScreen cases={cases} solvedCases={solvedCases} coins={coins} unlockedItems={unlockedItems} onUnlock={unlockItem} onPlay={play} onEdit={isAdmin ? edit : null} onNew={isAdmin ? newCase : null} isAdmin={isAdmin} onSignIn={signInAdmin} onSignOut={signOutAdmin} />;
     }
 
     ReactDOM.createRoot(document.getElementById("root")).render(<App />);
