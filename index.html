@@ -501,9 +501,8 @@
                   <div style={SE.half}><ELabel>Claimed Artist</ELabel><EInput value={c.painting.artist} onChange={v => update(d => { d.painting.artist = v; })} placeholder="e.g. Vincent van Gogh" /></div>
                 </div>
                 <div style={SE.row}>
-                  <div style={SE.third}><ELabel>Year Claimed</ELabel><EInput value={c.painting.year_claimed} onChange={v => update(d => { d.painting.year_claimed = v; })} placeholder="1889" /></div>
-                  <div style={SE.third}><ELabel>Movement</ELabel><EInput value={c.painting.movement} onChange={v => update(d => { d.painting.movement = v; })} placeholder="Post-Impressionism" /></div>
-                  <div style={SE.third}><ELabel>Emoji</ELabel><EInput value={c.painting.emoji} onChange={v => update(d => { d.painting.emoji = v; })} placeholder="🌙" /></div>
+                  <div style={SE.half}><ELabel>Year Claimed</ELabel><EInput value={c.painting.year_claimed} onChange={v => update(d => { d.painting.year_claimed = v; })} placeholder="1889" /></div>
+                  <div style={SE.half}><ELabel>Movement</ELabel><EInput value={c.painting.movement} onChange={v => update(d => { d.painting.movement = v; })} placeholder="Post-Impressionism" /></div>
                 </div>
                 <ELabel>Description</ELabel>
                 <ETextarea value={c.painting.description} onChange={v => update(d => { d.painting.description = v; })} placeholder="What does the painting look like? Set the scene for the player." rows={3} />
@@ -822,7 +821,7 @@
               <div style={SG.paintingArea}>
                 {c.painting.image
                   ? <img src={c.painting.image} alt="" style={SG.paintingImg} onClick={() => setViewerOpen(true)} title="Click to examine" />
-                  : <div style={SG.paintingEmoji}>{c.painting.emoji}</div>
+                  : <div style={SG.paintingEmoji}><span style={{ fontFamily: "'Special Elite', monospace", fontSize: 13, letterSpacing: 2, color: "#8b7355", textTransform: "uppercase" }}>No Image</span></div>
                 }
                 {submitted && (
                   <div style={{ position: "absolute", inset: 0, background: correct ? "rgba(42,106,58,0.18)" : "rgba(139,26,26,0.18)", pointerEvents: "none" }} />
@@ -1753,8 +1752,13 @@
                         ✓ Solved
                       </div>
                     )}
+                    {c.painting.image
+                      ? <img src={c.painting.image} alt={c.painting.title} style={{ width: "100%", height: 160, objectFit: "cover", display: "block", borderBottom: "1px solid #e8e0ce" }} />
+                      : <div style={{ width: "100%", height: 160, background: "#ede4d0", borderBottom: "1px solid #e8e0ce", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <span style={{ fontFamily: "'Special Elite', monospace", fontSize: 11, letterSpacing: 2, color: "#b8a888", textTransform: "uppercase" }}>No Image</span>
+                        </div>
+                    }
                     <div style={{ padding: "20px 20px 12px", flex: 1 }}>
-                      <div style={{ fontSize: 38, marginBottom: 10, lineHeight: 1 }}>{c.painting.emoji || "🖼️"}</div>
                       <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 17, fontWeight: 700, color: "#1c1510", marginBottom: 4, lineHeight: 1.3 }}>{c.painting.title || "Untitled"}</div>
                       <div style={{ fontFamily: "'Special Elite', monospace", fontSize: 12, color: "#8b7355", marginBottom: 2, letterSpacing: 0.5 }}>
                         {c.painting.artist || "Unknown"}{c.painting.year_claimed ? ` · ${c.painting.year_claimed}` : ""}
